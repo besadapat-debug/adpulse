@@ -283,6 +283,10 @@ MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_events_company ON events(client_id, company_id)",
     "CREATE INDEX IF NOT EXISTS ix_events_contact ON events(contact_id)",
     "ALTER TABLE agency ADD COLUMN rate_card TEXT DEFAULT ''",
+    "ALTER TABLE agency ADD COLUMN contact_name TEXT DEFAULT ''",
+    "ALTER TABLE agency ADD COLUMN phone TEXT DEFAULT ''",
+    "ALTER TABLE agency ADD COLUMN email TEXT DEFAULT ''",
+    "ALTER TABLE agency ADD COLUMN website TEXT DEFAULT ''",
 ]
 
 _lock = threading.RLock()

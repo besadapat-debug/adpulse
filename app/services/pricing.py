@@ -23,6 +23,9 @@ DEFAULT_RATE_CARD = {
     "ads_pct": 15,                  # or this % of ad spend, whichever is higher
     "reporting_monthly": 150,       # AdPulse live dashboard + monthly report
     "ad_spend_small": 1500,         # suggested monthly ad spend for a small business (scaled by size/industry)
+    "starter_gbp": 290,             # Starter, one-off: Google Business Profile clean-up (hours, photos, categories, services)
+    "starter_fixes": 390,           # Starter, one-off: fix the top 3 website problems from the audit
+    "starter_monthly": 290,         # Starter, optional month-to-month: Google posts + review requests
 }
 SIZE_MULT = {"sole": 0.7, "small": 1.0, "medium": 1.4, "large": 2.0, "enterprise": 3.0}
 SPEND_MULT = {"sole": 0.4, "small": 1.0, "medium": 2.5, "large": 6.0, "enterprise": 12.0}
@@ -45,6 +48,42 @@ def save_rate_card(values: dict) -> dict:
 
 def _r(x: float, step: int = 10) -> int:
     return int(round(x / step) * step)
+
+
+def payback(tier: dict, customer_value: float) -> dict | None:
+    """How many new regular customers a package needs to cover its first-year cost.
+
+    customer_value is the profit one new regular customer brings in a year (the business owner's own figure).
+    Year-one cost = one-off fees + 12 months of fees + 12 months of suggested ad spend (Starter: one-off only).
+    """
+    if not customer_value or customer_value <= 0:
+        return None
+    monthly = 0 if tier.get("starter") else tier["monthly_total"] + tier["ad_spend"]
+    year_cost = tier["setup_total"] + 12 * monthly
+    per_year = year_cost / customer_value
+    return {"year_cost": _r(year_cost, 1), "customers_per_year": round(per_year, 1),
+            "customers_per_month": round(per_year / 12, 1)}
+
+
+def _starter(report: dict, social_summary: dict, m: float, rc: dict) -> dict:
+    """Small, low-risk first job for walk-in prospects: a few fixed one-offs, then optional month-to-month."""
+    scale = m ** 0.5                                  # gentle: small jobs shouldn't balloon for bigger businesses
+    setup = []
+    gbp = (social_summary.get("platforms") or {}).get("google_business") or {}
+    if not gbp.get("exists"):
+        setup.append(("Google Business Profile set-up", _r(rc["starter_gbp"] * scale), "hours, photos, categories, services, booking link"))
+    else:
+        setup.append(("Google Business Profile clean-up", _r(rc["starter_gbp"] * scale), "hours, photos, categories, services, booking link"))
+    fixes = [c.get("problem") or c.get("title") for c in report.get("top_issues", [])][:3]
+    if fixes:
+        setup.append((f"Fix the top {len(fixes)} website problem{'s' if len(fixes) > 1 else ''}", _r(rc["starter_fixes"] * scale * (0.5 + len(fixes) / 6)),
+                      "; ".join(f for f in fixes if f)))
+    monthly = [("Google posts & review requests (optional)", _r(rc["starter_monthly"] * scale), "month to month, cancel any time")]
+    setup_total = sum(i[1] for i in setup)
+    return {"name": "Starter", "starter": True, "tagline": "One-off quick wins. No lock-in contract.",
+            "setup": [{"item": a, "amount": b, "detail": c} for a, b, c in setup],
+            "monthly": [{"item": a, "amount": b, "detail": c} for a, b, c in monthly],
+            "setup_total": setup_total, "monthly_total": monthly[0][1], "ad_spend": 0, "first_year": setup_total}
 
 
 def build_quote(report: dict, business: dict, social_summary: dict, rc: dict | None = None) -> dict:
@@ -108,12 +147,19 @@ def build_quote(report: dict, business: dict, social_summary: dict, rc: dict | N
                 "first_year": setup_total + 12 * month_total}
 
     tiers = [
+        _starter(report, social_summary, m, rc),
         tier("Essentials", 1, 0.6, False, 0, extras_setup=True),
         tier("Growth", 2, 1.0, True, 1.0),
         tier("Premium", len(expected), 1.3, True, 1.6),
     ]
-    tiers[1]["recommended"] = True
-    return {"currency": "AUD", "gst_note": "Prices exclude GST. Ad spend is paid directly to Google/Meta and isn't part of the fee.",
+    tiers[2]["recommended"] = True
+    try:
+        value = float(business.get("customer_spend") or 0) * float(business.get("margin_pct") or 100) / 100
+    except (TypeError, ValueError):
+        value = 0
+    for t in tiers:
+        t["payback"] = payback(t, value)
+    return {"customer_value": _r(value, 1) if value else None,"currency": "AUD", "gst_note": "Prices exclude GST. Ad spend is paid directly to Google/Meta and isn't part of the fee.",
             "tiers": tiers, "industry": ind["label"], "size": SIZES.get(size, SIZES["small"])["label"], "locations": locations,
             "reasons": reasons, "multiplier": round(m, 2)}
 

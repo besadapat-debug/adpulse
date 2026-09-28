@@ -199,3 +199,6 @@ tr.sel td { background: var(--accent-soft); }
   body { background: #fff; }
   .card, .kpi { box-shadow: none; break-inside: avoid; }
 }
+.ptier.starter { border: 2px dashed var(--good, #16a34a); }
+.ptier .payback { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: var(--good-bg); font-size: 12.5px; }
+.payform { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin: 10px 0 14px; background: var(--surface); }

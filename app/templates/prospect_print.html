@@ -1,0 +1,169 @@
+{%- set brand = agency.brand_color or '#4f46e5' -%}
+{%- macro grade(s) -%}{%- if s is none -%}–{%- elif s >= 85 -%}A{%- elif s >= 70 -%}B{%- elif s >= 55 -%}C{%- elif s >= 40 -%}D{%- else -%}E{%- endif -%}{%- endmacro -%}
+{%- macro colour(s) -%}{%- if s is none -%}#9ca3af{%- elif s >= 70 -%}#16a34a{%- elif s >= 55 -%}#d97706{%- else -%}#dc2626{%- endif -%}{%- endmacro -%}
+{%- macro ring(s, label, big=false) -%}
+  {%- set r = 34 if big else 26 -%}{%- set size = 84 if big else 66 -%}{%- set c = 2 * 3.14159 * r -%}
+  <div class="ring">
+    <svg width="{{ size }}" height="{{ size }}" viewBox="0 0 {{ size }} {{ size }}">
+      <circle cx="{{ size/2 }}" cy="{{ size/2 }}" r="{{ r }}" fill="none" stroke="#e5e7eb" stroke-width="7"/>
+      <circle cx="{{ size/2 }}" cy="{{ size/2 }}" r="{{ r }}" fill="none" stroke="{{ colour(s) }}" stroke-width="7" stroke-linecap="round"
+        stroke-dasharray="{{ '%.1f' % (c * (s or 0) / 100) }} {{ '%.1f' % c }}" transform="rotate(-90 {{ size/2 }} {{ size/2 }})"/>
+      <text x="50%" y="{{ '52%' }}" text-anchor="middle" dominant-baseline="middle" font-size="{{ 22 if big else 17 }}" font-weight="700" fill="#111827">{{ s if s is not none else '–' }}</text>
+    </svg>
+    <div class="rl">{{ label }}</div>
+  </div>
+{%- endmacro -%}
+{%- macro money(v) -%}${{ '{:,.0f}'.format(v) }}{%- endmacro -%}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Digital check-up · {{ r.name or r.domain }}</title>
+<style>
+  :root { --brand: {{ brand }}; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #eef0f3; color: #111827; font: 13px/1.45 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .bar { position: sticky; top: 0; z-index: 2; background: #111827; color: #fff; padding: 10px 16px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .bar button, .bar a { background: var(--brand); color: #fff; border: 0; border-radius: 8px; padding: 8px 14px; font: inherit; font-weight: 600; cursor: pointer; text-decoration: none; }
+  .bar a { background: transparent; border: 1px solid #4b5563; }
+  .bar label { display: flex; gap: 6px; align-items: center; }
+  .bar .tip { color: #9ca3af; font-size: 12px; }
+  .page { width: 210mm; min-height: 297mm; margin: 18px auto; background: #fff; padding: 14mm 14mm 12mm; box-shadow: 0 2px 16px rgba(0,0,0,.12); display: flex; flex-direction: column; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 12px; border-bottom: 3px solid var(--brand); padding-bottom: 10px; }
+  header img { max-height: 40px; max-width: 180px; }
+  .mark { width: 40px; height: 40px; border-radius: 10px; background: var(--brand); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 18px; }
+  .ag { display: flex; gap: 10px; align-items: center; font-weight: 700; font-size: 15px; }
+  .date { color: #6b7280; font-size: 12px; text-align: right; }
+  h1 { font-size: 22px; margin: 14px 0 2px; }
+  h2 { font-size: 14px; margin: 0 0 6px; color: var(--brand); text-transform: uppercase; letter-spacing: .04em; }
+  .sub { color: #4b5563; margin: 0 0 12px; }
+  .scores { display: flex; gap: 18px; align-items: center; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 12px; padding: 10px 16px; }
+  .ring { text-align: center; }
+  .rl { font-size: 11px; color: #4b5563; font-weight: 600; margin-top: 2px; }
+  .scores .say { flex: 1; font-size: 13px; }
+  .scores .say b { font-size: 15px; }
+  section { margin-top: 14px; }
+  .item { display: grid; grid-template-columns: 22px 1fr; gap: 8px; padding: 7px 0; border-bottom: 1px solid #f0f1f3; }
+  .item:last-child { border-bottom: 0; }
+  .n { width: 22px; height: 22px; border-radius: 50%; background: #fee2e2; color: #b91c1c; font-weight: 700; font-size: 12px; display: grid; place-items: center; }
+  .item .t { font-weight: 700; }
+  .item .d { color: #4b5563; font-size: 12px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .box { border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px 14px; }
+  .offer { border: 2px solid var(--brand); }
+  .offer .big { font-size: 24px; font-weight: 800; }
+  .offer .big span { font-size: 13px; font-weight: 500; color: #4b5563; }
+  .li { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; font-size: 12px; }
+  .li span { color: #374151; }
+  .muted { color: #6b7280; font-size: 11.5px; }
+  .ok { color: #16a34a; }
+  .pay { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 8px 12px; margin-top: 10px; font-size: 12.5px; }
+  footer { margin-top: auto; padding-top: 12px; border-top: 1px solid #e5e7eb; display: flex; justify-content: space-between; gap: 14px; align-items: flex-end; }
+  footer .who { font-size: 13px; }
+  footer .who b { font-size: 15px; }
+  .cta { background: var(--brand); color: #fff; border-radius: 10px; padding: 10px 14px; font-weight: 700; text-align: center; font-size: 13px; }
+  body.noprice .price-only { display: none !important; }
+  @page { size: A4; margin: 0; }
+  @media print {
+    html, body { background: #fff; }
+    .bar, .screen-only { display: none !important; }
+    .page { margin: 0; box-shadow: none; width: 210mm; height: 297mm; min-height: 0; overflow: hidden; }
+  }
+  @media screen and (max-width: 820px) {
+    .page { width: auto; min-height: 0; margin: 10px; padding: 16px; }
+    .cols { grid-template-columns: 1fr; }
+    .scores { flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body class="{{ '' if show_prices else 'noprice' }}">
+<div class="bar">
+  <button onclick="print()">Print / Save as PDF</button>
+  <label><input type="checkbox" id="showPrices" {{ 'checked' if show_prices else '' }}> Show prices</label>
+  <a href="/prospects">← Back to prospects</a>
+  <span class="tip">Tip: in the print window choose A4, and turn off “Headers and footers”.</span>
+</div>
+
+<div class="page">
+  <header>
+    <div class="ag">{% if agency.logo_url %}<img src="{{ agency.logo_url }}" alt="{{ agency.name }}">{% else %}<div class="mark">{{ (agency.name or 'A')[:1] }}</div>{% endif %}<span>{{ agency.name }}</span></div>
+    <div class="date">Free digital check-up<br>{{ today }}</div>
+  </header>
+
+  <h1>{{ r.name or r.domain }}</h1>
+  <p class="sub">How easy it is for local customers to find you, trust you and get in touch online, checked on {{ r.domain }} and your social profiles.</p>
+
+  <div class="scores">
+    {{ ring(o.score, 'Overall', true) }}
+    {{ ring(o.website, 'Website') }}
+    {{ ring(o.social, 'Social & Google') }}
+    <div class="say">
+      <b>{{ o.score }}/100 (grade {{ grade(o.score) }})</b><br>
+      {% if o.score is not none and o.score >= 80 %}A strong base. The gains now come from getting more out of what's already working.
+      {% elif o.score is not none and o.score >= 55 %}Some good foundations, with a few gaps that are likely costing you customers each week.
+      {% else %}Several gaps are making it hard for new customers to find and choose you. Most are quick to fix.{% endif %}
+      {% if r.rank and r.rank.industry_count and r.rank.industry_count > 2 %}<br><span class="muted">Ranked #{{ r.rank.industry_rank }} of {{ r.rank.industry_count }} {{ quote.industry }} businesses we've checked.</span>{% endif %}
+    </div>
+  </div>
+
+  <div class="cols">
+    <section>
+      <h2>Your website</h2>
+      {% for i in issues %}
+      <div class="item"><div class="n">{{ loop.index }}</div><div><div class="t">{{ i.problem }}</div><div class="d">{{ i.impact }}</div></div></div>
+      {% else %}<p class="ok">No major website problems found. Nice work.</p>{% endfor %}
+    </section>
+    <section>
+      <h2>Google &amp; social media</h2>
+      {% for i in social %}
+      <div class="item"><div class="n">{{ issues|length + loop.index }}</div><div><div class="t">{{ i.problem }}</div><div class="d">{{ i.impact }}</div></div></div>
+      {% else %}<p class="ok">Your Google and social profiles are in good shape.</p>{% endfor %}
+    </section>
+  </div>
+
+  {% if starter %}
+  <section>
+    <h2>What we'd fix first</h2>
+    <div class="cols">
+      <div class="box offer">
+        <div style="font-weight:700;font-size:15px">Starter: quick wins</div>
+        <div class="muted" style="margin-bottom:6px">{{ starter.tagline }}</div>
+        {% for i in starter.setup %}<div class="li"><span>✓ {{ i.item }}{% if i.detail %}<br><span class="muted">{{ i.detail }}</span>{% endif %}</span><b class="price-only">{{ money(i.amount) }}</b></div>{% endfor %}
+        <div class="price-only" style="margin-top:8px"><div class="big">{{ money(starter.setup_total) }} <span>once, ex GST</span></div>
+          <div class="muted">Optional afterwards: {{ starter.monthly[0].item|replace(' (optional)', '') }}, {{ money(starter.monthly_total) }}/month, cancel any time.</div></div>
+      </div>
+      <div class="box">
+        <div style="font-weight:700;font-size:15px">Then, when you're ready to grow</div>
+        <div class="muted" style="margin-bottom:6px">Ongoing marketing with a live results dashboard, so you always see what each dollar brings in.</div>
+        {% if growth %}{% for i in growth.monthly[:4] %}<div class="li"><span>• {{ i.item }}</span></div>{% endfor %}
+        <div class="price-only" style="margin-top:8px"><div class="big" style="font-size:19px">from {{ money(growth.monthly_total) }} <span>/month ex GST</span></div>
+          {% if growth.ad_spend %}<div class="muted">Plus ad spend paid directly to Google/Meta (suggested {{ money(growth.ad_spend) }}/month).</div>{% endif %}</div>{% endif %}
+      </div>
+    </div>
+    {% if quote.customer_value and starter.payback %}
+    <div class="pay price-only">
+      <b>Pays for itself:</b> if a new regular customer is worth about {{ money(quote.customer_value) }} a year to you,
+      the Starter job pays for itself with {{ '%g' % starter.payback.customers_per_year }} new regular{{ '' if starter.payback.customers_per_year == 1 else 's' }}{% if growth and growth.payback %},
+      and the ongoing plan with about {{ '%g' % growth.payback.customers_per_month }} a month{% endif %}.
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <footer>
+    <div class="who">
+      <b>{{ agency.contact_name or agency.name }}</b>{% if agency.contact_name %} · {{ agency.name }}{% endif %}<br>
+      {% if agency.phone %}{{ agency.phone }}{% endif %}{% if agency.phone and agency.email %} · {% endif %}{% if agency.email %}{{ agency.email }}{% endif %}
+      {% if agency.website %}<br>{{ agency.website }}{% endif %}
+      {% if not agency.phone and not agency.email %}<span class="muted screen-only">Add your phone and email in Settings → Agency branding.</span>{% endif %}
+    </div>
+    <div class="cta">Free 15-minute walk-through<br><span style="font-weight:500;font-size:12px">No obligation. Call or email to book.</span></div>
+  </footer>
+</div>
+<script>
+  document.getElementById('showPrices').onchange = e => document.body.classList.toggle('noprice', !e.target.checked);
+</script>
+</body>
+</html>

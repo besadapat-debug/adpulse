@@ -56,6 +56,7 @@ async function showProspect(id, data) {
         <div class="ringbox"><div class="score-ring sm ${gradeClass(gradeOf(o.website))}"><b>${o.website}</b></div><div class="small">Website</div></div>
         <div class="ringbox"><div class="score-ring sm ${gradeClass(gradeOf(o.social))}"><b>${o.social ?? '–'}</b></div><div class="small">Social</div></div>
       </div></div>
+    <div class="row" style="margin:10px 0 0;justify-content:flex-end"><a class="btn sm" href="/prospects/${r.id}/print" target="_blank" rel="noopener">🖨 Print leave-behind</a></div>
     <div class="row" style="margin:12px 0"><label class="f">Stage<select id="pStatus">${STATUSES.map(([k, l]) => `<option value="${k}" ${k === r.status ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="f" style="flex:1">Notes<input id="pNotes" value="${fmt.esc(r.notes || '')}" placeholder="Who you spoke to, next step…"></label></div>
     <div class="ptabs" role="tablist">${PTABS.map(([k, l]) => `<button type="button" data-t="${k}" class="${k === curTab ? 'on' : ''}">${l}${k === 'social' && ss.unassessed?.length ? ` <span class="dotwarn" title="Figures needed"></span>` : ''}</button>`).join('')}</div>
@@ -181,9 +182,23 @@ function tabWebsite(el, r) {
 function tabProposal(el, r) {
   const q = r.quote; if (!q) { el.innerHTML = '<div class="empty">No proposal yet.</div>'; return; }
   const money = v => '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
-  el.innerHTML = `
-    <p class="small muted">Priced for a <b>${fmt.esc(q.size)}</b> ${fmt.esc(q.industry)} business with ${q.locations} location${q.locations > 1 ? 's' : ''}, from your <a href="/settings#rates">rate card</a>. ${fmt.esc(q.gst_note)}</p>
-    <div class="ptiers">${q.tiers.map(t => `<div class="ptier ${t.recommended ? 'rec' : ''}">
+  const b = r.business || {};
+  const pb = t => {
+    if (!t.payback) return '';
+    const n = t.starter ? t.payback.customers_per_year : t.payback.customers_per_month;
+    return `<div class="payback">Pays for itself with <b>${n}</b> new regular${n === 1 ? '' : 's'} ${t.starter ? 'in total' : 'a month'}<br><span class="muted">${t.starter ? '' : 'Year one: fees + ad spend '}${money(t.payback.year_cost)}</span></div>`;
+  };
+  const card = t => t.starter ? `<div class="ptier starter">
+      <div class="badge good" style="margin-bottom:6px">Easy yes · no contract</div>
+      <h3 style="margin:0 0 4px;color:var(--text)">${t.name}</h3>
+      <div class="price">${money(t.setup_total)}<span> once</span></div>
+      <div class="small muted">${fmt.esc(t.tagline)}</div>
+      <div class="small" style="margin-top:10px;font-weight:600">One-off jobs</div>
+      ${t.setup.map(i => `<div class="li"><span>${fmt.esc(i.item)}<br><span class="muted">${fmt.esc(i.detail)}</span></span><b>${money(i.amount)}</b></div>`).join('')}
+      <div class="small" style="margin-top:10px;font-weight:600">Optional afterwards</div>
+      ${t.monthly.map(i => `<div class="li"><span>${fmt.esc(i.item.replace(' (optional)', ''))}<br><span class="muted">${fmt.esc(i.detail)}</span></span><b>${money(i.amount)}/mo</b></div>`).join('')}
+      ${pb(t)}
+    </div>` : `<div class="ptier ${t.recommended ? 'rec' : ''}">
       ${t.recommended ? '<div class="badge accent" style="margin-bottom:6px">Recommended</div>' : ''}
       <h3 style="margin:0 0 4px;color:var(--text)">${t.name}</h3>
       <div class="price">${money(t.monthly_total)}<span>/month</span></div>
@@ -192,15 +207,36 @@ function tabProposal(el, r) {
       ${t.monthly.map(i => `<div class="li"><span>${fmt.esc(i.item)}<br><span class="muted">${fmt.esc(i.detail)}</span></span><b>${money(i.amount)}</b></div>`).join('')}
       ${t.setup.length ? `<div class="small" style="margin-top:10px;font-weight:600">One-off</div>${t.setup.map(i => `<div class="li"><span>${fmt.esc(i.item)}</span><b>${money(i.amount)}</b></div>`).join('')}` : ''}
       <div class="small muted" style="margin-top:10px">First-year fees: ${money(t.first_year)}</div>
-    </div>`).join('')}</div>
+      ${pb(t)}
+    </div>`;
+  el.innerHTML = `
+    <p class="small muted">Priced for a <b>${fmt.esc(q.size)}</b> ${fmt.esc(q.industry)} business with ${q.locations} location${q.locations > 1 ? 's' : ''}, from your <a href="/settings#rates">rate card</a>. ${fmt.esc(q.gst_note)}</p>
+    <form id="payForm" class="payform">
+      <div style="flex:1 1 100%"><b>Pays for itself calculator</b>
+        <div class="small muted">Ask the owner: “Roughly what does a regular customer spend with you in a year, and what's your margin?” Use their numbers, not guesses.</div></div>
+      <label class="f">A regular spends per year ($)<input name="customer_spend" type="number" min="0" step="10" value="${b.customer_spend || ''}" placeholder="e.g. 600" style="width:150px"></label>
+      <label class="f">Their profit margin (%)<input name="margin_pct" type="number" min="1" max="100" step="1" value="${b.margin_pct || ''}" placeholder="e.g. 35" style="width:130px"></label>
+      <button class="btn primary">Work it out</button>
+      ${q.customer_value ? `<div class="small" style="align-self:center">Each new regular ≈ <b>${money(q.customer_value)}</b> profit a year</div>` : ''}
+    </form>
+    <div class="ptiers">${q.tiers.map(card).join('')}</div>
     <div class="row" style="margin-top:12px;justify-content:space-between">
-      <label class="row small" style="gap:6px"><input type="checkbox" id="mentionPrice" ${r.business?.mention_pricing ? 'checked' : ''}> Mention the Growth price in the pitch email</label>
-      <button class="btn" id="copyProp">Copy proposal text</button></div>`;
-  $('#mentionPrice').onchange = e => patchProspect({ business: { mention_pricing: e.target.checked } }, e.target.checked ? 'Price added to pitch' : 'Price removed from pitch');
+      <label class="row small" style="gap:6px"><input type="checkbox" id="mentionPrice" ${b.mention_pricing ? 'checked' : ''}> Mention prices in the pitch email</label>
+      <div class="row"><a class="btn" href="/prospects/${r.id}/print" target="_blank" rel="noopener">🖨 Print leave-behind</a><button class="btn" id="copyProp">Copy proposal text</button></div></div>`;
+  $('#payForm').onsubmit = e => {
+    e.preventDefault();
+    const fd = Object.fromEntries(new FormData(e.target));
+    patchProspect({ business: { customer_spend: +fd.customer_spend || 0, margin_pct: +fd.margin_pct || 100 } }, +fd.customer_spend ? 'Calculated' : 'Cleared');
+  };
+  $('#mentionPrice').onchange = e => patchProspect({ business: { mention_pricing: e.target.checked } }, e.target.checked ? 'Prices added to pitch' : 'Prices removed from pitch');
   $('#copyProp').onclick = async () => {
-    const txt = [`Proposal for ${r.name || r.domain}`, `(${q.gst_note})`, ''].concat(q.tiers.flatMap(t => [
+    const txt = [`Proposal for ${r.name || r.domain}`, `(${q.gst_note})`, ''].concat(q.tiers.flatMap(t => t.starter ? [
+      `${t.name}: ${money(t.setup_total)} once, no contract`, ...t.setup.map(i => `  • ${i.item} — ${money(i.amount)}`),
+      ...t.monthly.map(i => `  • Optional: ${i.item.replace(' (optional)', '')} — ${money(i.amount)}/mo, cancel any time`),
+      ...(t.payback ? [`  Pays for itself with ${t.payback.customers_per_year} new regular customers`] : []), ''] : [
       `${t.name}${t.recommended ? ' (recommended)' : ''}: ${money(t.monthly_total)}/month${t.setup_total ? ` + ${money(t.setup_total)} setup` : ''}${t.ad_spend ? `, suggested ad spend ${money(t.ad_spend)}/month` : ''}`,
-      ...t.monthly.map(i => `  • ${i.item} — ${money(i.amount)}/mo`), ...t.setup.map(i => `  • ${i.item} — ${money(i.amount)} one-off`), ''])).join('\n');
+      ...t.monthly.map(i => `  • ${i.item} — ${money(i.amount)}/mo`), ...t.setup.map(i => `  • ${i.item} — ${money(i.amount)} one-off`),
+      ...(t.payback ? [`  Pays for itself with about ${t.payback.customers_per_month} new regular customers a month`] : []), ''])).join('\n');
     try { await navigator.clipboard.writeText(txt); toast('Proposal copied'); } catch { toast('Copy not available in this browser'); }
   };
 }

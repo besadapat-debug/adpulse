@@ -295,13 +295,13 @@ def enrich(report: dict, prospect_id: int | None = None) -> dict:
     summary = social_svc.social_summary(soc, business["industry"], business["size"])
     report["business"], report["social"], report["social_summary"] = business, soc, summary
     report["overall"] = social_svc.overall(report["score"], summary)
+    for c in report.get("top_issues", []):
+        c["problem"] = problem_label(c)
     report["quote"] = pricing.build_quote(report, business, summary)
     report["compliance"] = social_svc.health_compliance_notes(business["industry"])
     if prospect_id:
         report["rank"] = pricing.industry_rank(prospect_id, business["industry"], report["overall"]["score"])
     agency = (db.one("SELECT name FROM agency WHERE id=1") or {}).get("name", "")
-    for c in report.get("top_issues", []):
-        c["problem"] = problem_label(c)
     report["pitch"] = pitch_email(report, agency)
     return report
 
@@ -353,7 +353,16 @@ def pitch_email(report: dict, agency: str, sender: str = "") -> dict:
     if business.get("mention_pricing") and quote.get("tiers"):
         g = next((t for t in quote["tiers"] if t.get("recommended")), quote["tiers"][0])
         setup = f" plus a one-off ${g['setup_total']:,} setup" if g["setup_total"] else ""
-        extra += f"To give you an idea of cost, our Growth package would be ${g['monthly_total']:,}/month{setup} (ex GST).\n\n"
+        extra += f"To give you an idea of cost, our Growth package would be ${g['monthly_total']:,}/month{setup} (ex GST)"
+        pb = g.get("payback")
+        if pb and quote.get("customer_value"):
+            extra += (f". At about ${quote['customer_value']:,} profit a year from each regular customer, that pays for itself "
+                      f"with roughly {pb['customers_per_month']:g} new regular{'s' if pb['customers_per_month'] != 1 else ''} a month")
+        extra += ".\n\n"
+        st = next((t for t in quote["tiers"] if t.get("starter")), None)
+        if st and st["setup_total"]:
+            extra += (f"If you'd rather start small, our Starter quick wins are a one-off ${st['setup_total']:,} (ex GST) "
+                      f"with no contract, so you can see results before committing to anything ongoing.\n\n")
     body = (f"Hi {name} team,\n\n"
             f"I had a look at {report['domain']} and your social profiles and spotted a few things that are likely costing you customers:\n\n"
             + "\n".join(bullets) + "\n\n"

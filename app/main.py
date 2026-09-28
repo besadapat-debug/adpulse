@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+from datetime import date
 import logging
 import re
 from contextlib import asynccontextmanager
@@ -613,6 +614,30 @@ async def update_prospect(pid: int, request: Request, user=Depends(require_edito
     return get_prospect(pid, user)
 
 
+@app.get("/prospects/{pid}/print", response_class=HTMLResponse)
+def print_prospect(request: Request, pid: int, prices: int = 1, user=Depends(require_user)):
+    """One-page leave-behind audit to print (or save as PDF) and hand over at the counter."""
+    _, report = _load_prospect(pid)
+    report = prospect_svc.enrich(report, pid)
+    ss = report.get("social_summary") or {}
+    cap = lambda t: t[:1].upper() + t[1:]
+    issues = [{"problem": i.get("problem") or i["title"], "impact": cap(prospect_svc._second_person(i["impact"])), "fix": i.get("fix", "")}
+              for i in report.get("top_issues", [])[:3]]
+    social = [{"problem": f"No {m} profile found", "impact": "Customers check here before choosing, and find your competitors instead."}
+              for m in (ss.get("missing") or [])[:2]]
+    for plat in sorted((p for p in (ss.get("platforms") or {}).values() if p.get("exists") and p.get("score") is not None and p.get("notes")),
+                       key=lambda p: p["score"])[:max(0, 3 - len(social))]:
+        if plat["score"] < 70:
+            social.append({"problem": f"{plat['label']} scores {plat['score']}/100", "impact": plat["notes"][0]})
+    tiers = (report.get("quote") or {}).get("tiers") or []
+    return templates.TemplateResponse(request, "prospect_print.html", {
+        "request": request, "r": report, "o": report.get("overall") or {}, "issues": issues, "social": social,
+        "starter": next((t for t in tiers if t.get("starter")), None),
+        "growth": next((t for t in tiers if t.get("recommended")), None),
+        "quote": report.get("quote") or {}, "show_prices": bool(prices),
+        "agency": db.one("SELECT * FROM agency WHERE id=1") or {}, "today": f"{date.today().day} {date.today():%B %Y}"})
+
+
 @app.post("/api/prospects/{pid}/rescan")
 def rescan_prospect(pid: int, user=Depends(require_editor)):
     _, report = _load_prospect(pid)
@@ -654,7 +679,7 @@ def get_agency(user=Depends(require_user)):
 
 @app.patch("/api/agency")
 async def patch_agency(request: Request, user=Depends(require_owner)):
-    b = {k: v for k, v in (await request.json()).items() if k in ("name", "brand_color", "logo_url")}
+    b = {k: v for k, v in (await request.json()).items() if k in ("name", "brand_color", "logo_url", "contact_name", "phone", "email", "website")}
     if b:
         db.execute(f"UPDATE agency SET {', '.join(f'{k}=?' for k in b)} WHERE id=1", tuple(b.values()))
     return db.one("SELECT * FROM agency WHERE id=1")

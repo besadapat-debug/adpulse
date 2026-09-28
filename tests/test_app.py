@@ -199,9 +199,24 @@ def test_quote_tiers_scale_with_size():
     small = pricing.build_quote(rep, {"industry": "dental", "size": "small", "locations": 1}, ss, pricing.DEFAULT_RATE_CARD)
     large = pricing.build_quote(rep, {"industry": "dental", "size": "large", "locations": 3}, ss, pricing.DEFAULT_RATE_CARD)
     s, l = small["tiers"], large["tiers"]
-    assert s[0]["monthly_total"] < s[1]["monthly_total"] < s[2]["monthly_total"]
-    assert l[1]["monthly_total"] > s[1]["monthly_total"] and l[1]["ad_spend"] > s[1]["ad_spend"]
-    assert s[1]["recommended"] and any("Tracking" in i["item"] for i in s[1]["setup"])
+    assert [t["name"] for t in s] == ["Starter", "Essentials", "Growth", "Premium"]
+    assert s[1]["monthly_total"] < s[2]["monthly_total"] < s[3]["monthly_total"]
+    assert l[2]["monthly_total"] > s[2]["monthly_total"] and l[2]["ad_spend"] > s[2]["ad_spend"]
+    assert s[2]["recommended"] and any("Tracking" in i["item"] for i in s[2]["setup"])
+    assert s[0]["starter"] and 0 < s[0]["setup_total"] < s[2]["setup_total"] + s[2]["monthly_total"] and s[0]["payback"] is None
+
+
+def test_payback_calculator():
+    from app.services import pricing, social
+    rep = {"checks": [{"key": "cta", "ok": False}], "top_issues": [{"title": "CTA", "problem": "No clear call-to-action"}], "score": 50}
+    ss = social.social_summary({}, "pharmacy", "small")
+    q = pricing.build_quote(rep, {"industry": "pharmacy", "size": "small", "customer_spend": 1000, "margin_pct": 30}, ss, pricing.DEFAULT_RATE_CARD)
+    assert q["customer_value"] == 300
+    st, g = q["tiers"][0], q["tiers"][2]
+    assert st["payback"]["customers_per_year"] == round(st["setup_total"] / 300, 1)
+    year = g["setup_total"] + 12 * (g["monthly_total"] + g["ad_spend"])
+    assert g["payback"]["customers_per_month"] == round(year / 300 / 12, 1)
+    assert "No clear call-to-action" in st["setup"][-1]["detail"]
 
 
 def test_prospect_social_and_pricing_api(client):
@@ -219,9 +234,19 @@ def test_prospect_social_and_pricing_api(client):
 
 def test_rate_card_changes_prices(client):
     pid = client.get("/api/prospects").json()[0]["id"]
-    before = client.get(f"/api/prospects/{pid}").json()["quote"]["tiers"][1]["monthly_total"]
+    before = client.get(f"/api/prospects/{pid}").json()["quote"]["tiers"][2]["monthly_total"]
     rc = client.get("/api/rate-card").json()["rates"]
     client.put("/api/rate-card", json={**rc, "social_monthly": rc["social_monthly"] * 2, "seo_monthly": rc["seo_monthly"] * 2})
-    after = client.get(f"/api/prospects/{pid}").json()["quote"]["tiers"][1]["monthly_total"]
+    after = client.get(f"/api/prospects/{pid}").json()["quote"]["tiers"][2]["monthly_total"]
     assert after > before
     client.put("/api/rate-card", json=client.get("/api/rate-card").json()["defaults"])
+
+
+def test_print_leave_behind(client):
+    pid = client.get("/api/prospects").json()[0]["id"]
+    client.patch("/api/agency", json={"phone": "0400 000 000", "email": "hello@agency.test"})
+    r = client.patch(f"/api/prospects/{pid}", json={"business": {"customer_spend": 800, "margin_pct": 40, "mention_pricing": True}}).json()
+    assert r["quote"]["customer_value"] == 320 and "Starter quick wins" in r["pitch"]["body"] and "pays for itself" in r["pitch"]["body"]
+    html = client.get(f"/prospects/{pid}/print").text
+    assert "Free digital check-up" in html and "0400 000 000" in html and "Starter: quick wins" in html and "Pays for itself" in html
+    assert 'class="noprice"' in client.get(f"/prospects/{pid}/print?prices=0").text

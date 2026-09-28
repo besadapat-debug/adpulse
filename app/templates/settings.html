@@ -7,6 +7,9 @@
     <div style="display:grid;gap:12px">
       <label class="f">Agency name<input name="name" value="{{ agency.name }}"></label>
       <div class="row"><label class="f">Brand colour<input type="color" name="brand_color" value="{{ agency.brand_color }}"></label><label class="f" style="flex:1">Logo URL<input name="logo_url" value="{{ agency.logo_url }}"></label></div>
+      <p class="small muted" style="margin:4px 0 0">Contact details for the printed leave-behind audit:</p>
+      <div class="row"><label class="f" style="flex:1">Your name<input name="contact_name" value="{{ agency.contact_name or '' }}"></label><label class="f" style="flex:1">Phone<input name="phone" value="{{ agency.phone or '' }}"></label></div>
+      <div class="row"><label class="f" style="flex:1">Email<input name="email" type="email" value="{{ agency.email or '' }}"></label><label class="f" style="flex:1">Website<input name="website" value="{{ agency.website or '' }}"></label></div>
       <div><button class="btn primary">Save</button></div>
     </div></form>
   <div class="card"><h2>Platform developer apps</h2>
@@ -67,7 +70,9 @@ const RATE_LABELS = {
   gbp_setup: ['Google Business Profile optimisation', 'one-off per location'], social_setup: ['New social profile setup', 'one-off per platform'],
   social_monthly: ['Social media management', 'per platform per month'], seo_monthly: ['Local SEO & reviews programme', 'per month'],
   ads_min_monthly: ['Ads management minimum', 'per month'], ads_pct: ['Ads management % of spend', '%'],
-  reporting_monthly: ['Dashboard & reporting', 'per month'], ad_spend_small: ['Suggested ad spend (small business)', 'per month, scaled by size'] };
+  reporting_monthly: ['Dashboard & reporting', 'per month'], ad_spend_small: ['Suggested ad spend (small business)', 'per month, scaled by size'],
+  starter_gbp: ['Starter: Google Business Profile clean-up', 'one-off'], starter_fixes: ['Starter: fix top 3 website problems', 'one-off'],
+  starter_monthly: ['Starter: Google posts & reviews (optional)', 'per month, no contract'] };
 async function loadRates() {
   const d = await api('/api/rate-card');
   $('#rateFields').innerHTML = Object.entries(RATE_LABELS).map(([k, [l, u]]) => `<label class="f">${l}<span class="small muted">${u}</span>
