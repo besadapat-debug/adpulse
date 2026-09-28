@@ -244,7 +244,8 @@ def analyse(page: dict, speed: dict | None = None) -> dict:
         "h1": [h.strip()[:120] for h in p.h1][:3], "ctas": ctas[:6], "phone_links": tel[:3],
         "checks": checks, "top_issues": fails[:5],
         "social_links": social_svc.detect_links(html, page["final_url"]),
-        "industry_guess": guess_industry(" ".join([p.title, p.meta.get("description", ""), " ".join(p.h1), " ".join(sorted(t for t in types if t))])),
+        "industry_guess": guess_industry(" ".join([p.title, p.meta.get("description", ""), " ".join(p.h1), " ".join(sorted(t for t in types if t)),
+                                                   domain.replace(".", " ")])),
         "ad_library": {
             "meta": f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=AU&q={quote(name or domain)}&search_type=keyword_unordered",
             "google": f"https://adstransparency.google.com/?region=AU&domain={quote(domain)}",
@@ -277,10 +278,13 @@ def guess_industry(text: str) -> str:
 
 def enrich(report: dict, prospect_id: int | None = None) -> dict:
     """(Re)compute social scores, overall score, quote, compliance notes, ranking and pitch."""
-    if not report.get("industry_guess"):
-        report["industry_guess"] = guess_industry(" ".join([report.get("name") or "", report.get("title") or "", " ".join(report.get("h1") or [])]))
+    if report.get("industry_guess") in (None, "", "other"):
+        report["industry_guess"] = guess_industry(" ".join([report.get("name") or "", report.get("title") or "", " ".join(report.get("h1") or []),
+                                                            (report.get("domain") or "").replace(".", " ")]))
     business = {"industry": report.get("industry_guess") or "other", "size": "small", "locations": 1, "mention_pricing": False,
                 **(report.get("business") or {})}
+    if business["industry"] == "other" and not business.get("industry_set") and report["industry_guess"] != "other":
+        business["industry"] = report["industry_guess"]   # a better guess than before, and you haven't chosen one yourself
     soc = report.get("social") or {}
     for plat, url in (report.get("social_links") or {}).items():   # auto-detected links fill any blanks
         entry = soc.setdefault(plat, {})

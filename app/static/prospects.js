@@ -90,7 +90,7 @@ function tabOverview(el, r) {
       <label class="f">Suburb / area<input name="area" value="${fmt.esc(b.area || '')}" placeholder="e.g. Berwick VIC" style="width:160px"></label>
       <button class="btn">Update</button>
     </form>
-    <p class="small muted" style="margin-top:6px">${r.industry_guess && r.industry_guess === b.industry ? 'Industry was detected from their website. ' : ''}These set the benchmarks for scoring and the fees in the proposal.</p>
+    <p class="small muted" style="margin-top:6px">${r.industry_guess && r.industry_guess !== 'other' && r.industry_guess === b.industry && !b.industry_set ? 'Industry was detected from their website. ' : b.industry === 'other' ? '<b>Choose their industry</b> so prices and benchmarks fit. ' : ''}These set the benchmarks for scoring and the fees in the proposal.</p>
     ${rk.overall_count > 1 ? `<div class="callout small" style="margin:10px 0">Ranks <b>#${rk.industry_rank} of ${rk.industry_count}</b> ${fmt.esc((OPTS.industries.find(i => i.key === b.industry) || {}).label || '')} businesses you've audited, and <b>#${rk.overall_rank} of ${rk.overall_count}</b> overall. Lower-ranked businesses have the most room to improve.</div>` : ''}
     ${compCallout(r)}
     ${ss.missing?.length ? `<div class="callout warn small" style="margin:10px 0">No ${ss.missing.join(', ')} found. For this industry, that's where customers look before choosing.</div>` : ''}

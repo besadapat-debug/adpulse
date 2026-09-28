@@ -601,6 +601,8 @@ async def update_prospect(pid: int, request: Request, user=Depends(require_edito
         _, report = _load_prospect(pid)
         if isinstance(body.get("business"), dict):
             report["business"] = {**(report.get("business") or {}), **body["business"]}
+            if "industry" in body["business"]:
+                report["business"]["industry_set"] = True
         if isinstance(body.get("social"), dict):
             soc = report.get("social") or {}
             for plat, vals in body["social"].items():

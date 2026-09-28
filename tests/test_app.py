@@ -338,3 +338,13 @@ def test_ai_review(client, monkeypatch):
     assert "price_check" in sent["messages"][0]["content"] and sent["model"]
     client.patch(f"/api/prospects/{pid}", json={"business": {"size": "large"}})
     assert client.get(f"/api/prospects/{pid}").json()["ai_review"]["stale"]
+
+
+def test_industry_from_domain():
+    from app.services import prospects
+    rep = {"name": "East Bentleigh Pharm", "title": "Home", "h1": [], "domain": "eastbentleighpharmacy.com.au", "industry_guess": "other",
+           "score": 48, "checks": [], "top_issues": [], "business": {"industry": "other", "size": "small"}}
+    out = prospects.enrich(rep)
+    assert out["business"]["industry"] == "pharmacy" and out["compliance"]
+    rep2 = {**rep, "industry_guess": "other", "business": {"industry": "other", "industry_set": True}}
+    assert prospects.enrich(rep2)["business"]["industry"] == "other"     # a choice you made yourself is kept
