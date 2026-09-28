@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 from datetime import date
 import logging
 import re
@@ -49,6 +50,8 @@ async def lifespan(_app):
 app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 templates = Jinja2Templates(directory=HERE / "templates")
+# changes on every deploy, so browsers fetch the new scripts/styles instead of an old cached copy
+templates.env.globals["v"] = (os.getenv("RENDER_GIT_COMMIT") or "")[:8] or str(int(__import__("time").time()))
 SESSION_TTL = 60 * 60 * 24 * 14
 
 

@@ -6,7 +6,7 @@
 <title>{% block title %}{{ agency.name }}{% endblock %} · {{ app_name }}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/app.css?v={{ v }}">
 <script src="/static/chart.umd.min.js"></script>
 {% block head %}{% endblock %}
 </head>
@@ -51,7 +51,7 @@
 {% else %}
 {% block auth %}{% endblock %}
 {% endif %}
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v={{ v }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
