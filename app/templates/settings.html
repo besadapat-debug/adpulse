@@ -75,11 +75,12 @@ const RATE_LABELS = {
   starter_monthly: ['Starter: Google posts & reviews (optional)', 'per month, no contract'],
   lite_monthly: ['Local Lite plan (sole traders & small shops)', 'per month, no contract'], ads_flat_sole: ['Ads management, sole traders', 'flat, per month'],
   ads_min_spend: ['Minimum ad spend before suggesting ads', 'per month'],
-  your_hourly_rate: ['Your minimum hourly rate', 'price check warns if a package pays less'] };
+  your_hourly_rate: ['Your minimum hourly rate', 'price check warns if a package pays less'],
+  usd_to_aud: ['US$ → A$ exchange rate', 'converts US ad benchmarks (check today\'s rate)'] };
 async function loadRates() {
   const d = await api('/api/rate-card');
   $('#rateFields').innerHTML = Object.entries(RATE_LABELS).map(([k, [l, u]]) => `<label class="f">${l}<span class="small muted">${u}</span>
-    <input name="${k}" type="number" min="0" step="10" value="${d.rates[k]}" ${'{{ user.role }}' !== 'owner' ? 'disabled' : ''}></label>`).join('');
+    <input name="${k}" type="number" min="0" step="any" value="${d.rates[k]}" ${'{{ user.role }}' !== 'owner' ? 'disabled' : ''}></label>`).join('');
   const reset = $('#rateReset');
   if (reset) reset.onclick = () => { Object.entries(d.defaults).forEach(([k, v]) => { const i = $(`#rateFields [name=${k}]`); if (i) i.value = v; }); toast('Defaults filled in. Click Save to keep them.'); };
 }

@@ -3,7 +3,7 @@ const STATUSES = [['new', 'New'], ['contacted', 'Contacted'], ['meeting', 'Meeti
 const AREA_ORDER = ['Tracking', 'Conversion', 'SEO', 'Trust', 'Compliance'];
 const gradeOf = s => s == null ? '–' : s >= 85 ? 'A' : s >= 70 ? 'B' : s >= 55 ? 'C' : s >= 40 ? 'D' : 'E';
 const gradeClass = g => g === 'A' || g === 'B' ? 'good' : g === 'C' ? 'warn' : g === '–' ? '' : 'bad';
-const PTABS = [['overview', 'Overview'], ['social', 'Social media'], ['website', 'Website'], ['competitors', 'Competitors'], ['proposal', 'Proposal & fees'], ['pitch', 'Pitch email']];
+const PTABS = [['overview', 'Overview'], ['social', 'Social media'], ['website', 'Website'], ['competitors', 'Competitors'], ['proposal', 'Proposal & fees'], ['ads', 'Ad budget'], ['pitch', 'Pitch email']];
 let OPTS = null, curTab = 'overview', curId = null, curReport = null;
 
 async function prospectsInit() {
@@ -74,7 +74,7 @@ async function patchProspect(body, msg = 'Saved') {
 
 function renderTab(r) {
   const el = $('#pBody');
-  ({ overview: tabOverview, social: tabSocial, website: tabWebsite, competitors: tabCompetitors, proposal: tabProposal, pitch: tabPitch })[curTab](el, r);
+  ({ overview: tabOverview, social: tabSocial, website: tabWebsite, competitors: tabCompetitors, proposal: tabProposal, ads: tabAds, pitch: tabPitch })[curTab](el, r);
 }
 
 /* ---------- Overview ---------- */
@@ -384,6 +384,75 @@ function tabProposal(el, r) {
       ...t.monthly.map(i => `  • ${i.item} — ${money(i.amount)}/mo`), ...t.setup.map(i => `  • ${i.item} — ${money(i.amount)} one-off`),
       ...(t.payback ? [`  Pays for itself with about ${t.payback.customers_per_month} new regular customers a month`] : []), ''])).join('\n');
     try { await navigator.clipboard.writeText(txt); toast('Proposal copied'); } catch { toast('Copy not available in this browser'); }
+  };
+}
+
+/* ---------- Ad budget ---------- */
+const AD_VERDICT = { strong: ['good', '✓ Worth running'], thin: ['warn', 'Pays, but thin'], loses: ['bad', 'Loses money'], too_small: ['warn', 'Budget too small'], ok: ['', 'Add customer value'] };
+function tabAds(el, r) {
+  const money = v => v == null ? '–' : '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  const camps = r.ad_campaigns || [];
+  const q = r.quote || {};
+  const field = (i, k, label, v, ph, w = 110, step = 'any') => `<label class="f">${label}<input data-i="${i}" data-k="${k}" type="number" min="0" step="${step}" value="${v ?? ''}" placeholder="${ph ?? ''}" style="width:${w}px"></label>`;
+  el.innerHTML = `
+    <p class="small muted">Work out how much to spend on ads for one campaign, what each new customer will cost, and whether it pays. Ad spend is paid by the business straight to Google/Meta, on top of your fee.</p>
+    ${camps.length ? '' : `<div class="callout small" style="margin:8px 0">No campaigns yet. Pick one below to start.</div>`}
+    <div id="adList">${camps.map((c, i) => {
+      const x = c.calc, d = x.defaults, [vc, vl] = AD_VERDICT[x.verdict] || ['', ''];
+      return `<div class="adcamp">
+        <div class="row" style="justify-content:space-between;gap:8px;align-items:flex-end">
+          <label class="f" style="flex:1;min-width:200px">Campaign<input data-i="${i}" data-k="name" value="${fmt.esc(c.name || '')}"></label>
+          <label class="f">Where<select data-i="${i}" data-k="platform">${Object.entries({ google: 'Google Search ads', meta: 'Facebook & Instagram ads' }).map(([k, l]) => `<option value="${k}" ${k === x.platform ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <button class="btn sm ghost" data-del="${i}" type="button">Remove</button></div>
+        <div class="row" style="gap:8px;margin-top:8px;align-items:flex-end;flex-wrap:wrap">
+          ${field(i, 'customers', 'New customers wanted /month', c.customers, x.mode === 'target' ? x.customers : '', 170, '1')}
+          <span class="small muted" style="padding-bottom:10px">or</span>
+          ${field(i, 'budget', 'Budget they have ($/month)', c.budget, '', 170, '10')}
+          ${field(i, 'value', 'One customer is worth ($)', c.value, q.customer_value || 'e.g. 300', 150)}
+        </div>
+        <details class="small" style="margin-top:6px"><summary>Assumptions (cost per click, conversion) · change for accuracy</summary>
+          <div class="row" style="gap:8px;margin-top:6px;align-items:flex-end;flex-wrap:wrap">
+            ${field(i, 'cpc', 'Cost per click (A$)', c.cpc, d.cpc, 120)}
+            ${field(i, 'conv', 'Clicks that enquire/book (%)', c.conv, d.conv, 170)}
+            ${field(i, 'close', 'Enquiries that become customers (%)', c.close, d.close, 210)}
+          </div>
+          <div class="muted" style="margin-top:4px">Blank boxes use: ${fmt.esc(d.benchmark)} benchmark${d.exact_match ? '' : ' (no exact match for this industry)'}, from <a href="${fmt.esc(d.url)}" target="_blank" rel="noopener">${fmt.esc(d.source)}</a>, converted at US$1 = A$${fmt.esc(String(OPTS.usd_to_aud || 1.5))} (change in Settings → Rate card).
+            ${x.platform === 'google' ? 'For the real Australian cost per click, open Google Ads → Tools → <b>Keyword Planner</b> → “Get search volume and forecasts”, type their main searches (e.g. “flu shot East Bentleigh”) and use the “Top of page bid” figures.' : ''}
+            Close rate is a guess until you ask the owner: “Out of 10 enquiries, how many become customers?”</div>
+        </details>
+        <div class="adres">
+          <div><span>Ad spend</span><b>${money(x.budget)}/mo</b><em>${money(x.daily)}/day</em></div>
+          <div><span>Clicks</span><b>${x.clicks}</b><em>at $${x.used.cpc.toFixed(2)} each</em></div>
+          <div><span>Enquiries</span><b>${x.leads}</b><em>${money(x.cost_per_lead)} each</em></div>
+          <div><span>New customers</span><b>${x.customers}</b><em>${money(x.cost_per_customer)} each</em></div>
+          <div><span>Their total /month</span><b>${money(x.total_monthly)}</b><em>${x.mgmt_fee ? `incl. your ${money(x.mgmt_fee)} fee` : 'no management fee'}</em></div>
+          ${x.profit != null ? `<div><span>Profit for them</span><b class="${x.profit < 0 ? 'neg' : 'pos'}">${money(x.profit)}/mo</b><em>${x.roas ? x.roas + '× back' : ''}</em></div>` : ''}
+        </div>
+        <div class="row" style="gap:8px;margin-top:8px;align-items:flex-start"><span class="badge ${vc}">${vl}</span>
+          <div class="small">${x.notes.map(n => fmt.esc(n)).join('<br>')}</div></div>
+        <label class="row small" style="gap:6px;margin-top:6px"><input type="checkbox" data-i="${i}" data-k="include_fee" ${c.include_fee !== false ? 'checked' : ''}> Include your ads management fee in the total</label>
+      </div>`;
+    }).join('')}</div>
+    <div class="row" style="margin-top:12px;justify-content:space-between;gap:8px;flex-wrap:wrap">
+      <select id="adAdd"><option value="">+ Add a campaign…</option>${(r.ad_presets || []).map((p, i) => `<option value="${i}">${fmt.esc(p.name)} (${p.platform === 'google' ? 'Google' : 'Facebook/Instagram'})${p.why ? ' · ' + fmt.esc(p.why) : ''}</option>`).join('')}<option value="blank">Blank campaign</option></select>
+      ${camps.length ? '<button class="btn primary" id="adSave" type="button">Calculate &amp; save</button>' : ''}</div>
+    <p class="small muted" style="margin-top:10px">How it works: customers wanted ÷ close rate = enquiries; enquiries ÷ conversion rate = clicks; clicks × cost per click = ad spend. Benchmarks are US averages and a starting point only. Never promise a number of customers, show it as an estimate.</p>`;
+  const collect = () => camps.map((c, i) => {
+    const o = { name: c.name, platform: c.calc.platform, customers: c.customers, budget: c.budget, cpc: c.cpc, conv: c.conv, close: c.close, value: c.value, include_fee: c.include_fee !== false };
+    $$(`#adList [data-i="${i}"]`).forEach(inp => { o[inp.dataset.k] = inp.type === 'checkbox' ? inp.checked : inp.value.trim() === '' ? null : (inp.type === 'number' ? +inp.value : inp.value.trim()); });
+    return o;
+  });
+  const save = (list, msg) => patchProspect({ ad_campaigns: list }, msg);
+  const btn = $('#adSave'); if (btn) btn.onclick = () => save(collect(), 'Calculated');
+  // typing a budget clears the customers goal and vice versa, so it's clear which one drives the sums
+  $$('#adList input[data-k=budget]').forEach(inp => inp.oninput = () => { if (inp.value) $(`#adList [data-i="${inp.dataset.i}"][data-k=customers]`).value = ''; });
+  $$('#adList input[data-k=customers]').forEach(inp => inp.oninput = () => { if (inp.value) $(`#adList [data-i="${inp.dataset.i}"][data-k=budget]`).value = ''; });
+  $$('#adList select, #adList input[type=checkbox]').forEach(inp => inp.onchange = () => save(collect(), 'Updated'));
+  $$('[data-del]', el).forEach(b2 => b2.onclick = () => save(collect().filter((_, i) => i !== +b2.dataset.del), 'Removed'));
+  $('#adAdd').onchange = e => {
+    const v = e.target.value; if (!v) return;
+    const p = v === 'blank' ? { name: 'New campaign', platform: 'google' } : r.ad_presets[+v];
+    save([...collect(), { name: p.name, platform: p.platform, customers: 4, include_fee: true }], 'Campaign added');
   };
 }
 

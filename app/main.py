@@ -560,7 +560,8 @@ def prospect_options(user=Depends(require_user)):
     return {"industries": [{"key": k, "label": v["label"], "health": v["health"], "expected": v["expected"]} for k, v in social_svc.INDUSTRIES.items()],
             "sizes": [{"key": k, "label": v["label"]} for k, v in social_svc.SIZES.items()],
             "platforms": [{"key": k, "label": v["label"]} for k, v in social_svc.PLATFORMS.items()],
-            "places_enabled": bool(comp_svc.api_key()), "ai_enabled": bool(ai_svc.api_key())}
+            "places_enabled": bool(comp_svc.api_key()), "ai_enabled": bool(ai_svc.api_key()),
+            "usd_to_aud": __import__("app.services.pricing", fromlist=["rate_card"]).rate_card()["usd_to_aud"]}
 
 
 def _load_prospect(pid: int) -> tuple[dict, dict]:
@@ -597,7 +598,7 @@ async def update_prospect(pid: int, request: Request, user=Depends(require_edito
     b = {k: v for k, v in body.items() if k in ("status", "notes")}
     if b:
         db.execute(f"UPDATE prospects SET {', '.join(f'{k}=?' for k in b)} WHERE id=?", (*b.values(), pid))
-    if any(k in body for k in ("business", "social", "name", "competitors")):
+    if any(k in body for k in ("business", "social", "name", "competitors", "ad_campaigns")):
         _, report = _load_prospect(pid)
         if isinstance(body.get("business"), dict):
             report["business"] = {**(report.get("business") or {}), **body["business"]}
@@ -614,6 +615,9 @@ async def update_prospect(pid: int, request: Request, user=Depends(require_edito
             report["social"] = soc
         if body.get("name"):
             report["name"] = str(body["name"])[:80]
+        if isinstance(body.get("ad_campaigns"), list):
+            keep = ("name", "platform", "customers", "budget", "cpc", "conv", "close", "value", "include_fee")
+            report["ad_campaigns"] = [{k: c.get(k) for k in keep} for c in body["ad_campaigns"][:12] if isinstance(c, dict)]
         if isinstance(body.get("competitors"), list):
             clean = []
             for c in body["competitors"][:30]:

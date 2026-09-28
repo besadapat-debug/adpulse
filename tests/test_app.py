@@ -354,3 +354,29 @@ def test_ai_prompt_copy(client):
     pid = client.get("/api/prospects").json()[0]["id"]
     t = client.get(f"/api/prospects/{pid}/ai-prompt").json()["text"]
     assert "Lead with" in t and "price_check" in t and "packages" in t
+
+
+def test_ad_budget_calculator():
+    from app.services import adbudget, pricing
+    rc = pricing.DEFAULT_RATE_CARD
+    # 4 customers, $5 clicks, 10% enquire, 50% buy -> 80 clicks -> $400; each customer $100
+    x = adbudget.evaluate({"platform": "google", "customers": 4, "cpc": 5, "conv": 10, "close": 50, "value": 400}, "pharmacy", rc, None, 0)
+    assert x["clicks"] == 80 and x["budget"] == 400 and x["cost_per_customer"] == 100 and x["verdict"] == "too_small"
+    assert x["min_budget"] == 1000 and x["fast_budget"] > 2000 and x["profit"] == 1200
+    # budget mode works backwards
+    y = adbudget.evaluate({"platform": "google", "budget": 3000, "cpc": 5, "conv": 10, "close": 50, "value": 400}, "pharmacy", rc, None, 0)
+    assert y["customers"] == 30 and y["verdict"] == "strong"
+    z = adbudget.evaluate({"platform": "meta", "budget": 1500, "cpc": 3, "conv": 2, "close": 20, "value": 200}, "trades", rc, None, 350)
+    assert z["verdict"] == "loses" and z["profit"] < 0
+    d = adbudget.defaults("dental", "google", 1.5)
+    assert d["cpc"] == 12.0 and d["exact_match"] and d["url"].startswith("https://")
+    assert not adbudget.defaults("automotive", "meta", 1.5)["exact_match"]
+
+
+def test_ad_campaigns_api(client):
+    pid = client.get("/api/prospects").json()[0]["id"]
+    r = client.get(f"/api/prospects/{pid}").json()
+    assert r["ad_presets"] and r["ad_defaults"]["google"]["cpc"] > 0
+    r = client.patch(f"/api/prospects/{pid}", json={"ad_campaigns": [{"name": "Flu shots", "platform": "google", "customers": 10, "value": 300, "evil": 1}]}).json()
+    c = r["ad_campaigns"][0]
+    assert c["name"] == "Flu shots" and "evil" not in c and c["calc"]["budget"] > 0 and c["calc"]["mgmt_fee"] > 0

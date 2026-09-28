@@ -29,7 +29,8 @@ DEFAULT_RATE_CARD = {
     "lite_monthly": 320,            # Local Lite (sole traders & small shops), month to month: Google profile + reviews + report
     "ads_flat_sole": 350,           # flat ads management fee for sole traders (instead of the minimum above)
     "ads_min_spend": 1000,          # don't suggest ads below this monthly spend: too little data to optimise
-    "your_hourly_rate": 75,         # the least you want to earn per hour of your time (price check warns below this)
+    "your_hourly_rate": 75,
+    "usd_to_aud": 1.5,              # converts US ad benchmarks to AUD in the ad budget calculator (check today's rate)         # the least you want to earn per hour of your time (price check warns below this)
 }
 
 # Rough hours each job takes you (first match wins). Used only by the price check to work out what you earn per hour.

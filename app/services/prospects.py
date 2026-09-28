@@ -16,7 +16,7 @@ from urllib.parse import quote, urlparse
 import httpx
 
 from .. import db
-from . import competitors as comp_svc, market as market_svc, pricing, social as social_svc
+from . import adbudget, competitors as comp_svc, market as market_svc, pricing, social as social_svc
 
 UA = "Mozilla/5.0 (compatible; AdPulseAudit/1.0; +https://adpulse.example/audit)"
 
@@ -318,6 +318,9 @@ def enrich(report: dict, prospect_id: int | None = None) -> dict:
     report["competitor_summary"] = comp_svc.summary(report)
     report["market"] = market_svc.comparison(business["industry"], report["quote"],
                                              social_svc.INDUSTRIES.get(business["industry"], {}).get("health", False))
+    report["ad_campaigns"] = adbudget.evaluate_all(report, pricing.rate_card())
+    report["ad_presets"] = adbudget.presets(business["industry"])
+    report["ad_defaults"] = {p: adbudget.defaults(business["industry"], p, pricing.rate_card()["usd_to_aud"]) for p in adbudget.PLATFORMS}
     report["maps_link"] = comp_svc.maps_link(business.get("search_term") or "", business.get("area") or "") if business.get("area") else ""
     if prospect_id:
         report["rank"] = pricing.industry_rank(prospect_id, business["industry"], report["overall"]["score"])
