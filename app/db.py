@@ -401,8 +401,12 @@ def _pool():
 
                 # Private schema: Supabase's auto-generated web API only exposes "public".
                 import psycopg
-                with psycopg.connect(settings.DATABASE_URL, autocommit=True, prepare_threshold=None) as c0:
-                    c0.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+                from .config import redact
+                try:
+                    with psycopg.connect(settings.DATABASE_URL, autocommit=True, prepare_threshold=None) as c0:
+                        c0.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+                except Exception as e:  # never print the database password into logs
+                    raise RuntimeError(f"Could not connect to the database: {redact(e)}") from None
 
                 def configure(conn):
                     conn.execute(f"SET search_path TO {schema}")

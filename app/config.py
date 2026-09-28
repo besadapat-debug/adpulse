@@ -26,12 +26,32 @@ def _bool(name: str, default: bool) -> bool:
     return os.getenv(name, str(default)).lower() in {"1", "true", "yes", "on"}
 
 
+def _clean_db_url(raw: str) -> str:
+    """Tidy a pasted connection string: stray spaces/quotes, a leading 'DATABASE_URL=',
+    and passwords containing symbols (they must be percent-encoded inside a URL)."""
+    from urllib.parse import quote, unquote
+    u = (raw or "").strip().strip('"').strip("'").strip()
+    if u.upper().startswith("DATABASE_URL="):
+        u = u.split("=", 1)[1].strip().strip('"').strip("'")
+    m = re.match(r"^(postgres(?:ql)?://)([^:/@]+):(.*)@([^@]+)$", u)
+    if m:
+        scheme, user, pwd, rest = m.groups()
+        pwd = pwd.strip("[]") if pwd.startswith("[") and pwd.endswith("]") else pwd
+        u = f"{scheme}{user}:{quote(unquote(pwd), safe='')}@{rest}"
+    return u
+
+
+def redact(text: str) -> str:
+    """Hide the password part of any postgres URL in a message."""
+    return re.sub(r"(postgres(?:ql)?://[^:/@\s]+:)[^@\s]+@", r"\1****@", str(text))
+
+
 class Settings:
     APP_NAME = os.getenv("APP_NAME", "AdPulse")
     # Public address of this site. On Render it's picked up automatically (RENDER_EXTERNAL_URL).
     BASE_URL = (os.getenv("BASE_URL") or os.getenv("RENDER_EXTERNAL_URL") or "http://localhost:8000").rstrip("/")
     # Postgres connection string (e.g. Supabase). When set, it's used instead of the SQLite file.
-    DATABASE_URL = os.getenv("DATABASE_URL", "")
+    DATABASE_URL = _clean_db_url(os.getenv("DATABASE_URL", ""))
     DATABASE_PATH = os.getenv("DATABASE_PATH", str(Path(__file__).resolve().parent.parent / "data" / "adpulse.db"))
     # 32 url-safe base64 bytes (Fernet key). Generate with:
     # python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"
