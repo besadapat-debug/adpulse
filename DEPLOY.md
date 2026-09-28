@@ -100,6 +100,18 @@ The **Competitors** tab can list similar businesses nearby with their Google rat
 
 Without the key, the tab still works: click **Open in Google Maps** and type in the top few competitors by hand.
 
+## Step 7 (optional): Switch on the AI price review
+
+The **Proposal & fees** tab has an **Ask AI to review these prices** button. It reads the audit, your packages, the price
+check and market prices, and suggests which package to lead with, what to change and what to say. It uses Claude and costs
+a few cents per review, paid to Anthropic.
+
+1. Go to **console.anthropic.com**, sign up, then **Billing → Add credit** (US$5 is plenty to start).
+2. **API keys → Create key**, name it `AdPulse`, and copy it. You only see it once.
+3. In **Render → adpulse → Environment → Add Environment Variable**: key `ANTHROPIC_API_KEY`, value = the key. Click **Save, rebuild and deploy**.
+
+Never paste the key into a chat or email. If it ever leaks, delete it in the console and make a new one.
+
 ## Good to know
 
 - **Updates:** when you get a new version of AdPulse, upload the changed files to GitHub the same way.

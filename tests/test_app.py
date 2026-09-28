@@ -300,3 +300,41 @@ def test_print_leave_behind(client):
     html = client.get(f"/prospects/{pid}/print").text
     assert "Free digital check-up" in html and "0400 000 000" in html and "Starter: quick wins" in html and "Pays for itself" in html
     assert 'class="noprice"' in client.get(f"/prospects/{pid}/print?prices=0").text
+
+
+def test_price_check_verdicts():
+    from app.services import pricing, social
+    rep = {"checks": [{"key": "analytics", "ok": False}, {"key": "cta", "ok": False}], "top_issues": [{"problem": "a"}], "score": 40}
+    ss = social.social_summary({}, "trades", "sole")
+    q = pricing.build_quote(rep, {"industry": "trades", "size": "sole", "revenue": 180000}, ss, pricing.DEFAULT_RATE_CARD)
+    pc = {r["name"]: r for r in q["price_check"]["rows"]}
+    assert pc["Growth"]["verdict"] == "too_expensive" and pc["Local Lite"]["verdict"] == "good"
+    assert q["price_check"]["best"] == "Local Lite"
+    rc = {**pricing.DEFAULT_RATE_CARD, "your_hourly_rate": 500}
+    q2 = pricing.build_quote(rep, {"industry": "trades", "size": "sole"}, ss, rc)
+    assert all(r["verdict"] == "too_cheap" for r in q2["price_check"]["rows"]) and q2["price_check"]["best"] is None
+
+
+def test_ai_review(client, monkeypatch):
+    from app.services import ai
+    pid = client.get("/api/prospects").json()[0]["id"]
+    monkeypatch.setattr(ai, "api_key", lambda: "")
+    assert client.post(f"/api/prospects/{pid}/ai-review").status_code == 400
+    sent = {}
+
+    class Resp:
+        status_code = 200
+        def json(self):
+            return {"content": [{"type": "text", "text": '```json\n{"lead_with": "Local Lite", "suggested_monthly": 280, "why": "Fits their budget.",'
+                                                          ' "say_this": "Start small.", "change": ["Drop Instagram"], "ask_them": [], "watch_out": []}\n```'}]}
+
+    def fake_post(url, **kw):
+        sent.update(kw["json"])
+        return Resp()
+    monkeypatch.setattr(ai, "api_key", lambda: "k")
+    monkeypatch.setattr(ai.httpx, "post", fake_post)
+    r = client.post(f"/api/prospects/{pid}/ai-review").json()
+    assert r["ai_review"]["lead_with"] == "Local Lite" and r["ai_review"]["change"] == ["Drop Instagram"] and not r["ai_review"]["stale"]
+    assert "price_check" in sent["messages"][0]["content"] and sent["model"]
+    client.patch(f"/api/prospects/{pid}", json={"business": {"size": "large"}})
+    assert client.get(f"/api/prospects/{pid}").json()["ai_review"]["stale"]

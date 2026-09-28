@@ -26,10 +26,22 @@ DEFAULT_RATE_CARD = {
     "starter_gbp": 290,             # Starter, one-off: Google Business Profile clean-up (hours, photos, categories, services)
     "starter_fixes": 390,           # Starter, one-off: fix the top 3 website problems from the audit
     "starter_monthly": 290,         # Starter, optional month-to-month: Google posts + review requests
-    "lite_monthly": 290,            # Local Lite (sole traders & small shops), month to month: Google profile + reviews + report
+    "lite_monthly": 320,            # Local Lite (sole traders & small shops), month to month: Google profile + reviews + report
     "ads_flat_sole": 350,           # flat ads management fee for sole traders (instead of the minimum above)
     "ads_min_spend": 1000,          # don't suggest ads below this monthly spend: too little data to optimise
+    "your_hourly_rate": 75,         # the least you want to earn per hour of your time (price check warns below this)
 }
+
+# Rough hours each job takes you (first match wins). Used only by the price check to work out what you earn per hour.
+HOURS = [
+    ("Google posts & review requests", 2.5), ("weekly posts", 2), ("Review requests", 1), ("dashboard", 0.5),
+    ("Local SEO", 6), ("Paid ads", 4), ("management", 5),                      # social platform management
+    ("Tracking", 5), ("Website conversion", 7), ("Fix the top", 3), ("Google Business Profile optimisation", 3),
+    ("Google Business Profile", 2.5), ("Set up", 2),
+]
+# Marketing spend as a share of yearly turnover: SBA guideline 7–8% for businesses under $5M;
+# the median Australian small business spends 3–5%.
+SPEND_COMFY_PCT, SPEND_OK_PCT, SPEND_HIGH_PCT = 5, 8, 12
 SIZE_MULT = {"sole": 0.7, "small": 1.0, "medium": 1.4, "large": 2.0, "enterprise": 3.0}
 SPEND_MULT = {"sole": 0.4, "small": 1.0, "medium": 2.5, "large": 6.0, "enterprise": 12.0}
 
@@ -99,6 +111,64 @@ def _lite(m: float, loc_mult: float, rc: dict) -> dict:
     return {"name": "Local Lite", "lite": True, "tagline": "Month to month. Cancel any time.",
             "setup": [], "monthly": [{"item": a, "amount": b, "detail": c} for a, b, c in items],
             "setup_total": 0, "monthly_total": total, "ad_spend": 0, "first_year": 12 * total}
+
+
+def _hours(item: str) -> float:
+    return next((h for k, h in HOURS if k.lower() in item.lower()), 2)
+
+
+def price_check(quote: dict, business: dict, rc: dict) -> dict:
+    """For each package: what you earn per hour, what share of their turnover it is, and a plain verdict."""
+    try:
+        revenue = float(business.get("revenue") or 0)
+    except (TypeError, ValueError):
+        revenue = 0
+    target = rc.get("your_hourly_rate", 75)
+    rows, best, best_ok = [], None, None
+    for t in quote["tiers"]:
+        optional = t.get("starter")
+        month_h = 0 if optional else sum(_hours(i["item"]) for i in t["monthly"])
+        setup_h = sum(_hours(i["item"]) for i in t["setup"])
+        if optional:
+            per_hour = t["setup_total"] / setup_h if setup_h else None
+        else:
+            year_h = setup_h + 12 * month_h
+            per_hour = (t["setup_total"] + 12 * t["monthly_total"]) / year_h if year_h else None
+        year_cost = t["setup_total"] + (0 if optional else 12 * (t["monthly_total"] + t["ad_spend"]))
+        pct = round(100 * year_cost / revenue, 1) if revenue else None
+        flags = []
+        if per_hour is not None and per_hour < target:
+            flags.append(f"You'd earn about ${per_hour:,.0f}/hour, under your ${target:,.0f} target. Raise the price or cut the work.")
+        if pct is not None and pct > SPEND_HIGH_PCT:
+            flags.append(f"{pct:g}% of their turnover. Well above the usual {SPEND_OK_PCT}% ceiling, so expect a no.")
+        elif pct is not None and pct > SPEND_OK_PCT:
+            flags.append(f"{pct:g}% of their turnover. A stretch, so only pitch it if they want fast growth.")
+        pb = t.get("payback")
+        hard = bool(pb and not optional and pb["customers_per_month"] > 10)
+        if hard:
+            flags.append(f"Needs ~{pb['customers_per_month']:g} new regular customers a month to pay for itself. Hard to promise.")
+        if pct is None:
+            verdict = "too_cheap" if per_hour is not None and per_hour < target else "unknown"
+        elif pct > SPEND_HIGH_PCT:
+            verdict = "too_expensive"
+        elif per_hour is not None and per_hour < target:
+            verdict = "too_cheap"
+        elif pct > SPEND_OK_PCT:
+            verdict = "stretch"
+        else:
+            verdict = "stretch" if hard else "good"
+        row = {"name": t["name"], "hours_month": month_h, "hours_setup": setup_h, "per_hour": None if per_hour is None else round(per_hour),
+               "year_cost": year_cost, "pct_revenue": pct, "verdict": verdict, "flags": flags}
+        rows.append(row)
+        if verdict == "good":      # tiers go cheapest → dearest, so these end on the biggest one that fits
+            best_ok = t["name"]
+            if pct is not None and pct <= SPEND_COMFY_PCT:
+                best = t["name"]
+    best = best or best_ok
+    if revenue and not best:
+        best = quote["tiers"][0]["name"]
+    return {"rows": rows, "best": best, "revenue": revenue or None, "target_hourly": target,
+            "comfy_pct": SPEND_COMFY_PCT, "ok_pct": SPEND_OK_PCT, "high_pct": SPEND_HIGH_PCT}
 
 
 def build_quote(report: dict, business: dict, social_summary: dict, rc: dict | None = None) -> dict:
@@ -183,7 +253,9 @@ def build_quote(report: dict, business: dict, social_summary: dict, rc: dict | N
         value = 0
     for t in tiers:
         t["payback"] = payback(t, value)
-    return {"customer_value": _r(value, 1) if value else None,"currency": "AUD", "gst_note": "Prices exclude GST. Ad spend is paid directly to Google/Meta and isn't part of the fee.",
+    quote = {"tiers": tiers}
+    check = price_check(quote, business, rc)
+    return {"price_check": check, "customer_value": _r(value, 1) if value else None,"currency": "AUD", "gst_note": "Prices exclude GST. Ad spend is paid directly to Google/Meta and isn't part of the fee.",
             "tiers": tiers, "industry": ind["label"], "size": SIZES.get(size, SIZES["small"])["label"], "locations": locations,
             "reasons": reasons, "multiplier": round(m, 2)}
 

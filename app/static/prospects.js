@@ -234,6 +234,43 @@ function tabCompetitors(el, r) {
 }
 
 /* ---------- Proposal & fees ---------- */
+const VERDICT = { good: ['good', '✓ Good fit'], stretch: ['warn', 'Stretch'], too_expensive: ['bad', 'Too expensive for them'], too_cheap: ['warn', 'Too cheap for you'], unknown: ['', '?'] };
+function priceCheckBox(q) {
+  const pc = q.price_check; if (!pc) return '';
+  const money = v => '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return `<div class="pcheck">
+    <div class="row" style="justify-content:space-between;gap:8px"><b>Price check</b>
+      ${pc.best ? `<span>Best fit for them: <b>${fmt.esc(pc.best)}</b></span>` : '<span class="small muted">Add their rough yearly turnover above to see which package they can afford</span>'}</div>
+    <div class="tw"><table><thead><tr><th>Package</th><th class="r">Your time</th><th class="r">You earn</th><th class="r">Year one for them</th><th class="r">% of turnover</th><th>Verdict</th></tr></thead><tbody>
+    ${pc.rows.map(x => `<tr><td>${fmt.esc(x.name)}</td>
+      <td class="r small">${x.hours_month ? `~${x.hours_month} h/mo` : `~${x.hours_setup} h once`}</td>
+      <td class="r ${x.per_hour != null && x.per_hour < pc.target_hourly ? 'neg' : ''}">${x.per_hour != null ? money(x.per_hour) + '/h' : '–'}</td>
+      <td class="r">${money(x.year_cost)}</td>
+      <td class="r">${x.pct_revenue != null ? x.pct_revenue + '%' : '–'}</td>
+      <td>${x.verdict === 'unknown' ? '<span class="small muted">needs turnover</span>' : `<span class="badge ${VERDICT[x.verdict][0]}">${VERDICT[x.verdict][1]}</span>`}</td></tr>
+      ${x.flags.length ? `<tr class="flagrow"><td colspan="6" class="small">${x.flags.map(f => '→ ' + fmt.esc(f)).join('<br>')}</td></tr>` : ''}`).join('')}
+    </tbody></table></div>
+    <div class="small muted">Rules: small businesses typically spend ${pc.comfy_pct}% or less of turnover on marketing (incl. ad spend); up to ${pc.ok_pct}% is the usual guideline, over ${pc.high_pct}% is a likely no.
+      “You earn” = fees ÷ your estimated hours, against your ${money(pc.target_hourly)}/h target (change it in <a href="/settings#rates">Rate card</a>).</div>
+  </div>`;
+}
+function aiBox(r) {
+  const a = r.ai_review;
+  const list = (t, xs) => xs && xs.length ? `<div class="small" style="margin-top:6px"><b>${t}</b>${xs.map(x => `<div>• ${fmt.esc(x)}</div>`).join('')}</div>` : '';
+  if (!OPTS.ai_enabled && !a) return `<div class="aibox small muted">🤖 <b>AI price review</b> is off. Add an Anthropic API key to switch it on (DEPLOY.md, Step 7). The price check above works without it.</div>`;
+  return `<div class="aibox">
+    <div class="row" style="justify-content:space-between;gap:8px"><b>🤖 AI price review</b>
+      ${OPTS.ai_enabled ? `<button class="btn sm ${a ? '' : 'primary'}" id="aiRun" type="button">${a ? 'Run again' : 'Ask AI to review these prices'}</button>` : ''}</div>
+    ${a ? `${a.stale ? '<div class="callout warn small" style="margin:6px 0">Prices or details changed since this review. Run it again.</div>' : ''}
+      ${a.lead_with ? `<div style="margin-top:6px">Lead with <b>${fmt.esc(a.lead_with)}</b>${a.suggested_monthly ? ` at about <b>$${Number(a.suggested_monthly).toLocaleString()}/month</b>` : ''}${a.suggested_setup ? ` + $${Number(a.suggested_setup).toLocaleString()} setup` : ''}</div>` : ''}
+      ${a.why ? `<div class="small" style="margin-top:4px">${fmt.esc(a.why)}</div>` : ''}
+      ${a.say_this ? `<div class="callout small" style="margin-top:8px"><b>Say this:</b> “${fmt.esc(a.say_this)}”</div>` : ''}
+      ${list('Change', a.change)}${list('Ask them', a.ask_them)}${list('Watch out', a.watch_out)}
+      <div class="small muted" style="margin-top:6px">AI suggestion from ${fmt.esc(a.date || '')}. It doesn't change your prices, you decide.</div>`
+    : '<div class="small muted" style="margin-top:4px">Reads the audit, packages, price check and market prices, then suggests which package to lead with, what to change and what to say. Costs a few cents per review.</div>'}
+  </div>`;
+}
+
 function marketBox(m) {
   if (!m) return '';
   return `<details class="market" open><summary><b>What else they could pay for</b> <span class="small muted">· Australian market prices, researched ${fmt.esc(m.as_of)}</span></summary>
@@ -255,9 +292,11 @@ function tabProposal(el, r) {
     const n = t.starter ? t.payback.customers_per_year : t.payback.customers_per_month;
     return `<div class="payback">Pays for itself with <b>${n}</b> new regular${n === 1 ? '' : 's'} ${t.starter ? 'in total' : 'a month'}<br><span class="muted">${t.starter ? '' : 'Year one: fees + ad spend '}${money(t.payback.year_cost)}</span></div>`;
   };
+  const pcRow = n => ((q.price_check || {}).rows || []).find(x => x.name === n);
+  const chip = t => { const x = pcRow(t.name); if (!x || x.verdict === 'unknown') return ''; const [c, l] = VERDICT[x.verdict]; return `<span class="badge ${c}" title="${fmt.esc(x.flags.join(' '))}">${l}</span>`; };
   const card = t => t.starter ? `<div class="ptier starter">
       <div class="badge good" style="margin-bottom:6px">Easy yes · no contract</div>
-      <h3 style="margin:0 0 4px;color:var(--text)">${t.name}</h3>
+      <h3 style="margin:0 0 4px;color:var(--text)">${t.name} ${chip(t)}</h3>
       <div class="price">${money(t.setup_total)}<span> once</span></div>
       <div class="small muted">${fmt.esc(t.tagline)}</div>
       <div class="small" style="margin-top:10px;font-weight:600">One-off jobs</div>
@@ -267,7 +306,7 @@ function tabProposal(el, r) {
       ${pb(t)}
     </div>` : `<div class="ptier ${t.recommended ? 'rec' : ''} ${t.lite ? 'lite' : ''}">
       ${t.recommended || t.lite ? `<div class="row" style="gap:6px;margin-bottom:6px">${t.recommended ? '<span class="badge accent">Recommended</span>' : ''}${t.lite ? '<span class="badge good">No lock-in</span>' : ''}</div>` : ''}
-      <h3 style="margin:0 0 4px;color:var(--text)">${t.name}</h3>
+      <h3 style="margin:0 0 4px;color:var(--text)">${t.name} ${chip(t)}</h3>
       <div class="price">${money(t.monthly_total)}<span>/month</span></div>
       ${t.tagline ? `<div class="small muted">${fmt.esc(t.tagline)}</div>` : ''}
       <div class="small muted">${t.setup_total ? money(t.setup_total) + ' one-off setup' : 'No setup fee'}${t.ad_spend ? ` · suggested ad spend ${money(t.ad_spend)}/mo` : ''}</div>
@@ -280,13 +319,16 @@ function tabProposal(el, r) {
   el.innerHTML = `
     <p class="small muted">Priced for a <b>${fmt.esc(q.size)}</b> ${fmt.esc(q.industry)} business with ${q.locations} location${q.locations > 1 ? 's' : ''}, from your <a href="/settings#rates">rate card</a>. ${fmt.esc(q.gst_note)}</p>
     <form id="payForm" class="payform">
-      <div style="flex:1 1 100%"><b>Pays for itself calculator</b>
-        <div class="small muted">Ask the owner: “Roughly what does a regular customer spend with you in a year, and what's your margin?” Use their numbers, not guesses.</div></div>
+      <div style="flex:1 1 100%"><b>Pays for itself &amp; price check</b>
+        <div class="small muted">Ask the owner: “Roughly what does a regular customer spend with you in a year, what's your margin, and roughly what's your yearly turnover?” Use their numbers, not guesses. Any one of them helps.</div></div>
       <label class="f">A regular spends per year ($)<input name="customer_spend" type="number" min="0" step="10" value="${b.customer_spend || ''}" placeholder="e.g. 600" style="width:150px"></label>
       <label class="f">Their profit margin (%)<input name="margin_pct" type="number" min="1" max="100" step="1" value="${b.margin_pct || ''}" placeholder="e.g. 35" style="width:130px"></label>
+      <label class="f">Their yearly turnover, rough ($)<input name="revenue" type="number" min="0" step="1000" value="${b.revenue || ''}" placeholder="e.g. 250000" style="width:170px"></label>
       <button class="btn primary">Work it out</button>
       ${q.customer_value ? `<div class="small" style="align-self:center">Each new regular ≈ <b>${money(q.customer_value)}</b> profit a year</div>` : ''}
     </form>
+    ${priceCheckBox(q)}
+    ${aiBox(r)}
     <div class="ptiers">${q.tiers.map(card).join('')}</div>
     ${marketBox(r.market)}
     <div class="row" style="margin-top:12px;justify-content:space-between">
@@ -295,7 +337,13 @@ function tabProposal(el, r) {
   $('#payForm').onsubmit = e => {
     e.preventDefault();
     const fd = Object.fromEntries(new FormData(e.target));
-    patchProspect({ business: { customer_spend: +fd.customer_spend || 0, margin_pct: +fd.margin_pct || 100 } }, +fd.customer_spend ? 'Calculated' : 'Cleared');
+    patchProspect({ business: { customer_spend: +fd.customer_spend || 0, margin_pct: +fd.margin_pct || 100, revenue: +fd.revenue || 0 } }, 'Calculated');
+  };
+  const aiBtn = $('#aiRun');
+  if (aiBtn) aiBtn.onclick = async () => {
+    aiBtn.disabled = true; aiBtn.textContent = 'Thinking… (about 20 seconds)';
+    try { const res = await api(`/api/prospects/${curId}/ai-review`, { method: 'POST' }); toast('AI review ready'); showProspect(curId, res); }
+    catch (err) { toast(err.message, 8000); aiBtn.disabled = false; aiBtn.textContent = 'Ask AI to review these prices'; }
   };
   $('#mentionPrice').onchange = e => patchProspect({ business: { mention_pricing: e.target.checked } }, e.target.checked ? 'Prices added to pitch' : 'Prices removed from pitch');
   $('#copyProp').onclick = async () => {

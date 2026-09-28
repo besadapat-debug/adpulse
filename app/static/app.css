@@ -206,3 +206,7 @@ tr.sel td { background: var(--accent-soft); }
 .market { margin-top: 16px; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--surface); }
 .market summary { cursor: pointer; }
 .market .mk-you { margin-top: 10px; display: grid; gap: 4px; font-size: 13px; }
+.pcheck, .aibox { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin: 0 0 14px; background: var(--surface); }
+.pcheck table td.neg { color: var(--bad); font-weight: 600; }
+.pcheck tr.flagrow td { border-top: 0; padding-top: 0; color: var(--text-2, inherit); }
+.aibox { border-color: var(--accent); }

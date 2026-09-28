@@ -25,7 +25,7 @@ from .services import alerts as alerts_svc
 from .services import attribution as attr_svc
 from .services import audiences as aud_svc
 from .services import budget as budget_svc
-from .services import competitors as comp_svc, compliance, metrics, prospects as prospect_svc, visitors
+from .services import ai as ai_svc, competitors as comp_svc, compliance, metrics, prospects as prospect_svc, visitors
 from .services.sync import scheduler, sync_client, sync_connection
 
 logging.basicConfig(level=logging.INFO)
@@ -560,7 +560,7 @@ def prospect_options(user=Depends(require_user)):
     return {"industries": [{"key": k, "label": v["label"], "health": v["health"], "expected": v["expected"]} for k, v in social_svc.INDUSTRIES.items()],
             "sizes": [{"key": k, "label": v["label"]} for k, v in social_svc.SIZES.items()],
             "platforms": [{"key": k, "label": v["label"]} for k, v in social_svc.PLATFORMS.items()],
-            "places_enabled": bool(comp_svc.api_key())}
+            "places_enabled": bool(comp_svc.api_key()), "ai_enabled": bool(ai_svc.api_key())}
 
 
 def _load_prospect(pid: int) -> tuple[dict, dict]:
@@ -585,6 +585,8 @@ def get_prospect(pid: int, user=Depends(require_user)):
         except Exception:
             report["social_links"] = {}
     report = prospect_svc.enrich(report, pid)   # keeps older audits up to date with scoring/pricing changes
+    if report.get("ai_review"):
+        report["ai_review"]["stale"] = report["ai_review"].get("basis") != _price_basis(report)
     _save_prospect(pid, report)
     return {**report, "id": p["id"], "status": p["status"], "notes": p["notes"], "is_example": p["is_example"], "created_at": p["created_at"]}
 
@@ -671,6 +673,26 @@ async def find_competitors(pid: int, request: Request, user=Depends(require_edit
     report["competitors"] = {"list": found + manual, "query": f"{term} in {area}", "found_at": date.today().isoformat()}
     report = prospect_svc.enrich(report, pid)
     _save_prospect(pid, report)
+    return get_prospect(pid, user)
+
+
+def _price_basis(report: dict) -> list:
+    return [[t["name"], t["setup_total"], t["monthly_total"]] for t in (report.get("quote") or {}).get("tiers", [])]
+
+
+@app.post("/api/prospects/{pid}/ai-review")
+def ai_review(pid: int, user=Depends(require_editor)):
+    """Ask Claude to review this prospect's packages and suggest which to lead with and how to pitch it."""
+    _, report = _load_prospect(pid)
+    report = prospect_svc.enrich(report, pid)
+    try:
+        result = ai_svc.review(report)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    result["basis"] = _price_basis(report)
+    report["ai_review"] = result
+    _save_prospect(pid, report)
+    db.audit(user["email"], "ai_price_review", report.get("domain", ""))
     return get_prospect(pid, user)
 
 
