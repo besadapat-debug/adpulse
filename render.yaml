@@ -7,7 +7,7 @@ services:
     runtime: python
     plan: free
     region: singapore            # closest Render region to Australia; put Supabase in Singapore too
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install --timeout 60 --retries 10 -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips "*"
     healthCheckPath: /healthz
     autoDeploy: true
