@@ -235,6 +235,25 @@ function tabCompetitors(el, r) {
 
 /* ---------- Proposal & fees ---------- */
 const VERDICT = { good: ['good', '✓ Good fit'], stretch: ['warn', 'Stretch'], too_expensive: ['bad', 'Too expensive for them'], too_cheap: ['warn', 'Too cheap for you'], unknown: ['', '?'] };
+function offerBox(r) {
+  const q = r.quote, pc = q.price_check || {}, b = r.business || {};
+  const money = v => '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  const by = n => q.tiers.find(t => t.name === n);
+  const starter = q.tiers.find(t => t.starter);
+  let next = pc.best && pc.best !== 'Starter' ? by(pc.best) : null;
+  if (!next) next = q.tiers.find(t => t.lite) || by('Essentials');
+  const gaps = [...(r.social_summary?.missing || []).map(m => 'no ' + m), ...(r.top_issues || []).slice(0, 2).map(i => (i.problem || i.title).toLowerCase())].slice(0, 3);
+  return `<div class="offer-box">
+    <div style="font-size:15px"><b>What to offer</b> ${pc.best ? '<span class="badge good">based on their numbers</span>' : '<span class="badge">fill in the 3 boxes below to check it fits their budget</span>'}</div>
+    <div class="offer-steps">
+      <div><span class="n">1</span><div><b>Now: ${fmt.esc(starter.name)}, ${money(starter.setup_total)} once.</b> No contract.<div class="small muted">Fixes their biggest gaps${gaps.length ? ': ' + fmt.esc(gaps.join(', ')) : ''}.</div></div></div>
+      ${next ? `<div><span class="n">2</span><div><b>After 4–6 weeks: ${fmt.esc(next.name)}, ${money(next.monthly_total)}/month${next.setup_total ? ` + ${money(next.setup_total)} setup` : ''}.</b>${next.lite ? ' Month to month.' : ''}
+        <div class="small muted">Once they can see more calls and directions on your dashboard.</div></div></div>` : ''}
+    </div>
+    <div class="small muted">You can ignore the other packages for this business unless they ask for more. Details of each package are further down.</div>
+  </div>`;
+}
+
 function priceCheckBox(q) {
   const pc = q.price_check; if (!pc) return '';
   const money = v => '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -276,7 +295,7 @@ function aiBox(r) {
 
 function marketBox(m) {
   if (!m) return '';
-  return `<details class="market" open><summary><b>What else they could pay for</b> <span class="small muted">· Australian market prices, researched ${fmt.esc(m.as_of)}</span></summary>
+  return `<details class="market"><summary><b>What else they could pay for</b> <span class="small muted">· Australian market prices, researched ${fmt.esc(m.as_of)}</span></summary>
     ${m.you.length ? `<div class="mk-you">${m.you.map(y => `<div>✓ ${fmt.esc(y)}</div>`).join('')}</div>` : ''}
     <div class="callout small" style="margin:8px 0">${fmt.esc(m.tip)}</div>
     <div class="tw"><table><thead><tr><th>Option</th><th class="r">Price (AUD)</th><th>Notes</th></tr></thead><tbody>
@@ -320,6 +339,7 @@ function tabProposal(el, r) {
       ${pb(t)}
     </div>`;
   el.innerHTML = `
+    ${offerBox(r)}
     <p class="small muted">Priced for a <b>${fmt.esc(q.size)}</b> ${fmt.esc(q.industry)} business with ${q.locations} location${q.locations > 1 ? 's' : ''}, from your <a href="/settings#rates">rate card</a>. ${fmt.esc(q.gst_note)}</p>
     <form id="payForm" class="payform">
       <div style="flex:1 1 100%"><b>Pays for itself &amp; price check</b>

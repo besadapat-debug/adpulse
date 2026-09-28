@@ -210,3 +210,7 @@ tr.sel td { background: var(--accent-soft); }
 .pcheck table td.neg { color: var(--bad); font-weight: 600; }
 .pcheck tr.flagrow td { border-top: 0; padding-top: 0; color: var(--text-2, inherit); }
 .aibox { border-color: var(--accent); }
+.offer-box { border: 2px solid var(--accent); border-radius: 12px; padding: 14px 16px; margin: 0 0 12px; background: var(--surface); }
+.offer-steps { display: grid; gap: 10px; margin: 10px 0 8px; }
+.offer-steps > div { display: grid; grid-template-columns: 26px 1fr; gap: 8px; align-items: start; }
+.offer-steps .n { width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 700; display: grid; place-items: center; font-size: 13px; }
