@@ -682,6 +682,12 @@ def _price_basis(report: dict) -> list:
     return [[t["name"], t["setup_total"], t["monthly_total"]] for t in (report.get("quote") or {}).get("tiers", [])]
 
 
+@app.get("/api/prospects/{pid}/ai-prompt")
+def ai_prompt(pid: int, user=Depends(require_user)):
+    _, report = _load_prospect(pid)
+    return {"text": ai_svc.prompt_text(prospect_svc.enrich(report, pid))}
+
+
 @app.post("/api/prospects/{pid}/ai-review")
 def ai_review(pid: int, user=Depends(require_editor)):
     """Ask Claude to review this prospect's packages and suggest which to lead with and how to pitch it."""

@@ -348,3 +348,9 @@ def test_industry_from_domain():
     assert out["business"]["industry"] == "pharmacy" and out["compliance"]
     rep2 = {**rep, "industry_guess": "other", "business": {"industry": "other", "industry_set": True}}
     assert prospects.enrich(rep2)["business"]["industry"] == "other"     # a choice you made yourself is kept
+
+
+def test_ai_prompt_copy(client):
+    pid = client.get("/api/prospects").json()[0]["id"]
+    t = client.get(f"/api/prospects/{pid}/ai-prompt").json()["text"]
+    assert "Lead with" in t and "price_check" in t and "packages" in t

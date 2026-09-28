@@ -257,7 +257,10 @@ function priceCheckBox(q) {
 function aiBox(r) {
   const a = r.ai_review;
   const list = (t, xs) => xs && xs.length ? `<div class="small" style="margin-top:6px"><b>${t}</b>${xs.map(x => `<div>• ${fmt.esc(x)}</div>`).join('')}</div>` : '';
-  if (!OPTS.ai_enabled && !a) return `<div class="aibox small muted">🤖 <b>AI price review</b> is off. Add an Anthropic API key to switch it on (DEPLOY.md, Step 7). The price check above works without it.</div>`;
+  if (!OPTS.ai_enabled && !a) return `<div class="aibox"><div class="row" style="justify-content:space-between;gap:8px"><b>🤖 Free AI second opinion</b>
+      <button class="btn sm primary" id="aiCopy" type="button">Copy for Claude</button></div>
+    <div class="small muted" style="margin-top:4px">Click the button, open <a href="https://claude.ai/new" target="_blank" rel="noopener">claude.ai</a> (free account), press Ctrl+V and Enter.
+      Claude reads this proposal and suggests which package to lead with and what to say. The price check above already works without it.</div></div>`;
   return `<div class="aibox">
     <div class="row" style="justify-content:space-between;gap:8px"><b>🤖 AI price review</b>
       ${OPTS.ai_enabled ? `<button class="btn sm ${a ? '' : 'primary'}" id="aiRun" type="button">${a ? 'Run again' : 'Ask AI to review these prices'}</button>` : ''}</div>
@@ -338,6 +341,12 @@ function tabProposal(el, r) {
     e.preventDefault();
     const fd = Object.fromEntries(new FormData(e.target));
     patchProspect({ business: { customer_spend: +fd.customer_spend || 0, margin_pct: +fd.margin_pct || 100, revenue: +fd.revenue || 0 } }, 'Calculated');
+  };
+  const aiCopy = $('#aiCopy');
+  if (aiCopy) aiCopy.onclick = async () => {
+    try { const d = await api(`/api/prospects/${curId}/ai-prompt`); await navigator.clipboard.writeText(d.text);
+      toast('Copied. Now open claude.ai, press Ctrl+V and Enter', 6000); }
+    catch (err) { toast('Copy failed: ' + err.message, 6000); }
   };
   const aiBtn = $('#aiRun');
   if (aiBtn) aiBtn.onclick = async () => {

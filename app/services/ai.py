@@ -60,6 +60,14 @@ def _payload(report: dict) -> dict:
     }
 
 
+def prompt_text(report: dict) -> str:
+    """The same review as a plain-text prompt, to paste into a free Claude chat (claude.ai): no API key needed."""
+    rules = SYSTEM.split("Reply with JSON only")[0].strip()
+    return (rules + "\n\nReply in plain English with these headings: Lead with (package and price), Why, What to say to the owner, "
+            "What to change, Questions to ask them, Watch out.\n\nHere is the proposal data:\n"
+            + json.dumps(_payload(report), indent=1, default=str))
+
+
 def _parse(text: str) -> dict:
     text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
     start, end = text.find("{"), text.rfind("}")
