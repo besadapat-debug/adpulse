@@ -553,20 +553,91 @@ async def create_prospect(request: Request, user=Depends(require_editor)):
     return r
 
 
-@app.get("/api/prospects/{pid}")
-def get_prospect(pid: int, user=Depends(require_user)):
+@app.get("/api/prospects/options")
+def prospect_options(user=Depends(require_user)):
+    from .services import social as social_svc
+    return {"industries": [{"key": k, "label": v["label"], "health": v["health"], "expected": v["expected"]} for k, v in social_svc.INDUSTRIES.items()],
+            "sizes": [{"key": k, "label": v["label"]} for k, v in social_svc.SIZES.items()],
+            "platforms": [{"key": k, "label": v["label"]} for k, v in social_svc.PLATFORMS.items()]}
+
+
+def _load_prospect(pid: int) -> tuple[dict, dict]:
     p = db.one("SELECT * FROM prospects WHERE id=?", (pid,))
     if not p:
         raise HTTPException(404)
-    return {**json.loads(p["report"]), "id": p["id"], "status": p["status"], "notes": p["notes"], "is_example": p["is_example"], "created_at": p["created_at"]}
+    return p, json.loads(p["report"])
+
+
+def _save_prospect(pid: int, report: dict) -> None:
+    db.execute("UPDATE prospects SET report=?, score=?, name=? WHERE id=?",
+               (json.dumps(report), report["overall"]["score"], report.get("name") or "", pid))
+
+
+@app.get("/api/prospects/{pid}")
+def get_prospect(pid: int, user=Depends(require_user)):
+    p, report = _load_prospect(pid)
+    if "social_links" not in report and not p["is_example"]:
+        # audits made before social scoring existed: re-read the site once to find their social profiles
+        try:
+            report = prospect_svc.rescan(report)
+        except Exception:
+            report["social_links"] = {}
+    report = prospect_svc.enrich(report, pid)   # keeps older audits up to date with scoring/pricing changes
+    _save_prospect(pid, report)
+    return {**report, "id": p["id"], "status": p["status"], "notes": p["notes"], "is_example": p["is_example"], "created_at": p["created_at"]}
 
 
 @app.patch("/api/prospects/{pid}")
 async def update_prospect(pid: int, request: Request, user=Depends(require_editor)):
-    b = {k: v for k, v in (await request.json()).items() if k in ("status", "notes")}
+    body = await request.json()
+    b = {k: v for k, v in body.items() if k in ("status", "notes")}
     if b:
         db.execute(f"UPDATE prospects SET {', '.join(f'{k}=?' for k in b)} WHERE id=?", (*b.values(), pid))
-    return {"ok": True}
+    if any(k in body for k in ("business", "social", "name")):
+        _, report = _load_prospect(pid)
+        if isinstance(body.get("business"), dict):
+            report["business"] = {**(report.get("business") or {}), **body["business"]}
+        if isinstance(body.get("social"), dict):
+            soc = report.get("social") or {}
+            for plat, vals in body["social"].items():
+                if isinstance(vals, dict):
+                    soc[plat] = {**(soc.get(plat) or {}), **vals}
+                    if "url" in vals and not vals["url"]:
+                        soc[plat].pop("detected", None)
+                        (report.get("social_links") or {}).pop(plat, None)
+            report["social"] = soc
+        if body.get("name"):
+            report["name"] = str(body["name"])[:80]
+        report = prospect_svc.enrich(report, pid)
+        _save_prospect(pid, report)
+    return get_prospect(pid, user)
+
+
+@app.post("/api/prospects/{pid}/rescan")
+def rescan_prospect(pid: int, user=Depends(require_editor)):
+    _, report = _load_prospect(pid)
+    try:
+        fresh = prospect_svc.rescan(report)
+    except (ValueError, httpx.HTTPError) as e:
+        raise HTTPException(400, f"Couldn't load the website again: {e}")
+    fresh = prospect_svc.enrich(fresh, pid)
+    _save_prospect(pid, fresh)
+    return get_prospect(pid, user)
+
+
+@app.get("/api/rate-card")
+def get_rate_card(user=Depends(require_user)):
+    from .services import pricing
+    return {"rates": pricing.rate_card(), "defaults": pricing.DEFAULT_RATE_CARD}
+
+
+@app.put("/api/rate-card")
+async def put_rate_card(request: Request, user=Depends(require_owner)):
+    from .services import pricing
+    try:
+        return {"rates": pricing.save_rate_card(await request.json()), "defaults": pricing.DEFAULT_RATE_CARD}
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Rates must be numbers")
 
 
 @app.delete("/api/prospects/{pid}")

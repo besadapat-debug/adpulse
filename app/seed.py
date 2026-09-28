@@ -181,15 +181,38 @@ EXAMPLE_SITES = [
 ]
 
 
+EXAMPLE_SOCIAL = {
+    "ridgeway-plumbing.example": ({"industry": "trades", "size": "small", "locations": 1},
+                                  {"google_business": {"exists": True, "rating": 4.2, "reviews": 18, "posts_30d": 0},
+                                   "facebook": {"url": "https://www.facebook.com/ridgewayplumbing.example", "followers": 240, "posts_30d": 1,
+                                                "days_since_post": 47, "avg_engagement": 1}}),
+    "coastalcafes.example": ({"industry": "hospitality", "size": "medium", "locations": 3},
+                             {"google_business": {"exists": True, "rating": 4.6, "reviews": 212, "posts_30d": 2},
+                              "instagram": {"url": "https://www.instagram.com/coastalcafes.example", "followers": 6100, "posts_30d": 9,
+                                            "days_since_post": 2, "avg_engagement": 140},
+                              "facebook": {"url": "https://www.facebook.com/coastalcafes.example", "followers": 3900, "posts_30d": 6,
+                                           "days_since_post": 3, "avg_engagement": 9}}),
+    "summitelectrical.example": ({"industry": "trades", "size": "small", "locations": 1},
+                                 {"google_business": {"exists": True, "rating": 4.9, "reviews": 64, "posts_30d": 1},
+                                  "facebook": {"url": "https://www.facebook.com/summitelectrical.example", "followers": 720, "posts_30d": 3,
+                                               "days_since_post": 9, "avg_engagement": 4},
+                                  "instagram": {"url": "https://www.instagram.com/summitelectrical.example", "followers": 380, "posts_30d": 2,
+                                                "days_since_post": 11, "avg_engagement": 9}}),
+}
+
+
 def seed_example_prospects():
-    from .services.prospects import analyse, pitch_email
-    agency = db.one("SELECT name FROM agency WHERE id=1")["name"]
+    from .services.prospects import analyse, enrich
     for url, secs, size, sitemap, html in EXAMPLE_SITES:
         rep = analyse({"final_url": url, "html": html, "status": 200, "seconds": secs, "bytes": size, "sitemap": sitemap, "robots": True})
-        rep["pitch"] = pitch_email(rep, agency)
+        business, social = EXAMPLE_SOCIAL.get(rep["domain"], ({}, {}))
+        rep["business"], rep["social"] = business, social
+        enrich(rep)
         status = {"ridgeway-plumbing.example": "contacted", "coastalcafes.example": "new", "summitelectrical.example": "meeting"}.get(rep["domain"], "new")
-        db.execute("INSERT INTO prospects (url, domain, name, score, report, status, is_example) VALUES (?,?,?,?,?,?,1)",
-                   (url, rep["domain"], rep["name"], rep["score"], json.dumps(rep), status))
+        pid = db.execute("INSERT INTO prospects (url, domain, name, score, report, status, is_example) VALUES (?,?,?,?,?,?,1)",
+                         (url, rep["domain"], rep["name"], rep["overall"]["score"], json.dumps(rep), status))
+        enrich(rep, pid)
+        db.execute("UPDATE prospects SET report=? WHERE id=?", (json.dumps(rep), pid))
 
 
 if __name__ == "__main__":

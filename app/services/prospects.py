@@ -16,6 +16,7 @@ from urllib.parse import quote, urlparse
 import httpx
 
 from .. import db
+from . import pricing, social as social_svc
 
 UA = "Mozilla/5.0 (compatible; AdPulseAudit/1.0; +https://adpulse.example/audit)"
 
@@ -242,6 +243,8 @@ def analyse(page: dict, speed: dict | None = None) -> dict:
         "trackers": trackers, "consent_banner": has_consent, "schema_types": sorted(t for t in types if t), "title": p.title.strip()[:120],
         "h1": [h.strip()[:120] for h in p.h1][:3], "ctas": ctas[:6], "phone_links": tel[:3],
         "checks": checks, "top_issues": fails[:5],
+        "social_links": social_svc.detect_links(html, page["final_url"]),
+        "industry_guess": guess_industry(" ".join([p.title, p.meta.get("description", ""), " ".join(p.h1), " ".join(sorted(t for t in types if t))])),
         "ad_library": {
             "meta": f"https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=AU&q={quote(name or domain)}&search_type=keyword_unordered",
             "google": f"https://adstransparency.google.com/?region=AU&domain={quote(domain)}",
@@ -251,25 +254,112 @@ def analyse(page: dict, speed: dict | None = None) -> dict:
     }
 
 
+INDUSTRY_HINTS = [
+    ("pharmacy", r"pharmac|chemist|dispens"), ("dental", r"dentist|dental|orthodont"), ("physio", r"physio"),
+    ("chiro", r"chiropract|osteopath"), ("psych", r"psycholog|counsell|mental health"), ("gp", r"medical (centre|center|clinic)|\bgp\b|general practi"),
+    ("cosmetic", r"cosmetic|aesthetic|injectable|skin clinic"), ("allied", r"podiatr|occupational therap|dietit|speech path|audiolog|optometr"),
+    ("fitness", r"\bgym\b|fitness|pilates|yoga|personal train"), ("beauty", r"salon|beauty|hair|barber|nails|lash"),
+    ("hospitality", r"\bcaf[eé]\b|restaurant|\bbar\b|bistro|pizza|coffee"), ("real_estate", r"real estate|realty|property management"),
+    ("legal", r"lawyer|solicitor|legal|law firm"), ("accounting", r"accountant|accounting|bookkeep|\btax\b|financial plann"),
+    ("trades", r"plumb|electric|roof|builder|carpent|landscap|painter|hvac|air ?con|locksmith|concret|fencing|pest"),
+    ("automotive", r"mechanic|auto|car service|tyre|panel beat|smash repair"), ("education", r"childcare|early learning|tutor|school|kinder"),
+    ("ecommerce", r"shop online|free shipping|add to cart|checkout"), ("retail", r"\bstore\b|boutique|retail"),
+]
+
+
+def guess_industry(text: str) -> str:
+    t = (text or "").lower()
+    for key, rx in INDUSTRY_HINTS:
+        if re.search(rx, t):
+            return key
+    return "other"
+
+
+def enrich(report: dict, prospect_id: int | None = None) -> dict:
+    """(Re)compute social scores, overall score, quote, compliance notes, ranking and pitch."""
+    if not report.get("industry_guess"):
+        report["industry_guess"] = guess_industry(" ".join([report.get("name") or "", report.get("title") or "", " ".join(report.get("h1") or [])]))
+    business = {"industry": report.get("industry_guess") or "other", "size": "small", "locations": 1, "mention_pricing": False,
+                **(report.get("business") or {})}
+    soc = report.get("social") or {}
+    for plat, url in (report.get("social_links") or {}).items():   # auto-detected links fill any blanks
+        entry = soc.setdefault(plat, {})
+        if not entry.get("url"):
+            entry["url"], entry["detected"] = url, True
+    yt = soc.get("youtube")
+    if yt and yt.get("url") and not yt.get("followers") and yt.get("auto_checked") != yt["url"]:
+        yt["auto_checked"] = yt["url"]          # look each channel up once, not on every view
+        stats = social_svc.youtube_stats(yt["url"])
+        if stats:
+            yt.update({k: v for k, v in stats.items() if yt.get(k) in (None, "")})
+    summary = social_svc.social_summary(soc, business["industry"], business["size"])
+    report["business"], report["social"], report["social_summary"] = business, soc, summary
+    report["overall"] = social_svc.overall(report["score"], summary)
+    report["quote"] = pricing.build_quote(report, business, summary)
+    report["compliance"] = social_svc.health_compliance_notes(business["industry"])
+    if prospect_id:
+        report["rank"] = pricing.industry_rank(prospect_id, business["industry"], report["overall"]["score"])
+    agency = (db.one("SELECT name FROM agency WHERE id=1") or {}).get("name", "")
+    for c in report.get("top_issues", []):
+        c["problem"] = problem_label(c)
+    report["pitch"] = pitch_email(report, agency)
+    return report
+
+
+PROBLEMS = {
+    "https": "Not secure (no HTTPS)", "analytics": "No website analytics", "ads_tracking": "No ad conversion tracking",
+    "meta_pixel": "No Meta Pixel for retargeting", "consent": "No cookie consent banner", "viewport": "Not mobile-friendly",
+    "click_to_call": "No tap-to-call phone link", "cta": "No clear call-to-action", "form": "No enquiry or sign-up form",
+    "title": "Weak Google search title", "description": "Missing Google search description", "h1": "Unclear main heading",
+    "schema": "Google can't read your business details", "social_share": "No preview when your links are shared",
+    "alt": "Images missing descriptions", "sitemap": "No sitemap for Google", "speed": "Slow to load on mobile",
+}
+
+
+def problem_label(check: dict) -> str:
+    return PROBLEMS.get(check.get("key"), check.get("title", "").split(" (")[0])
+
+
 def _second_person(text: str) -> str:
-    for a, b in (("They can't", "you can't"), ("they can't", "you can't"), ("they're", "you're"), ("Any ads they run", "any ads you run"),
-                 ("They ", "you "), (" they ", " you "), ("Visitors don't", "visitors don't"), ("Search engines", "search engines"),
-                 ("Most local", "most local"), ("Browsers", "browsers"), ("Google", "Google"), ("No way", "there's no way"),
-                 ("Every extra", "every extra"), ("Links shared", "links shared"), ("Missing out", "you're missing out"),
-                 ("Hurts", "it hurts"), ("Needed for", "it's needed for"), ("Mobile visitors", "mobile visitors"), ("Without analytics", "without analytics")):
+    """Rewrite an audit finding ("they …") as if speaking to the business ("you …"). Visitors stay "they"."""
+    for a, b in (("They can't", "You can't"), ("they can't tell", "you can't tell"), ("Any ads they run", "any ads you run"),
+                 ("so they're paying", "so you're paying"), ("Without analytics", "without analytics"), ("Missing out", "you're missing out"),
+                 ("No way", "there's no way"), ("Hurts", "it hurts"), ("Needed for", "it's needed for")):
         text = text.replace(a, b)
-    return text
+    return text[:1].lower() + text[1:] if text[:2] not in ("Go", "Fa", "Me") else text
 
 
 def pitch_email(report: dict, agency: str, sender: str = "") -> dict:
-    issues = report["top_issues"][:3]
-    bullets = "\n".join(f"• {i['title'].split(' (')[0]}: {_second_person(i['impact'])}" for i in issues)
     name = report["name"] or report["domain"]
-    subject = f"{len(issues)} quick wins for {name}'s website" if issues else f"An idea for {name}'s marketing"
+    bullets = [f"• {problem_label(i)}: {_second_person(i['impact'])}" for i in report["top_issues"][:2]]
+    summary = report.get("social_summary") or {}
+    business = report.get("business") or {}
+    if summary.get("missing"):
+        bullets.append(f"• No {', '.join(summary['missing'][:2])} presence: that's where many of your customers look before choosing.")
+    else:
+        weakest = sorted((r for r in (summary.get("platforms") or {}).values() if r.get("score") is not None and r["notes"]),
+                         key=lambda r: r["score"])
+        if weakest:
+            bullets.append(f"• {weakest[0]['label']}: {weakest[0]['notes'][0]}")
+    if not bullets:
+        bullets = ["• Your website and socials are in good shape, so there's room to scale with well-tracked ads."]
+    score = (report.get("overall") or {}).get("score", report["score"])
+    subject = f"{len(bullets)} quick wins for {name}'s online presence"
+    extra = ""
+    if report.get("compliance"):
+        extra += ("We specialise in health practices, so everything we do follows AHPRA's advertising guidelines, "
+                  "which a lot of general agencies get wrong.\n\n")
+    quote = report.get("quote") or {}
+    if business.get("mention_pricing") and quote.get("tiers"):
+        g = next((t for t in quote["tiers"] if t.get("recommended")), quote["tiers"][0])
+        setup = f" plus a one-off ${g['setup_total']:,} setup" if g["setup_total"] else ""
+        extra += f"To give you an idea of cost, our Growth package would be ${g['monthly_total']:,}/month{setup} (ex GST).\n\n"
     body = (f"Hi {name} team,\n\n"
-            f"I had a look at {report['domain']} and spotted a few things that are likely costing you enquiries:\n\n{bullets}\n\n"
-            f"Each is a fairly quick fix, and together they'd make any advertising you run measurably more effective. "
-            f"I've put the full audit together (it scored {report['score']}/100) and I'm happy to walk you through it in 15 minutes, no obligation.\n\n"
+            f"I had a look at {report['domain']} and your social profiles and spotted a few things that are likely costing you customers:\n\n"
+            + "\n".join(bullets) + "\n\n"
+            f"Each is fixable, and together they'd make any marketing you do measurably more effective. "
+            f"I've put the full audit together (you scored {score}/100 overall) and I'm happy to walk you through it in 15 minutes, no obligation.\n\n"
+            + extra +
             f"Would Tuesday or Thursday this week suit?\n\n"
             f"Regards,\n{sender or '[Your name]'}\n{agency}\n\n"
             f"—\nI'm contacting you because your business address is publicly listed. Reply 'unsubscribe' and I won't contact you again.")
@@ -279,10 +369,18 @@ def pitch_email(report: dict, agency: str, sender: str = "") -> dict:
 def run_audit(url: str, save: bool = True) -> dict:
     page = fetch(url)
     report = analyse(page, pagespeed(page["final_url"]))
-    agency = db.one("SELECT name FROM agency WHERE id=1")["name"]
-    report["pitch"] = pitch_email(report, agency)
+    enrich(report)
     if save:
         report["id"] = db.execute("INSERT INTO prospects (url, domain, name, score, report) VALUES (?,?,?,?,?)",
-                                  (report["url"], report["domain"], report["name"], report["score"], json.dumps(report)))
+                                  (report["url"], report["domain"], report["name"], report["overall"]["score"], json.dumps(report)))
+        enrich(report, report["id"])
+        db.execute("UPDATE prospects SET report=? WHERE id=?", (json.dumps(report), report["id"]))
     return report
+
+
+def rescan(report: dict) -> dict:
+    """Re-run the website audit, keeping everything entered by hand (business details, social figures)."""
+    fresh = analyse(fetch(report["url"]), pagespeed(report["url"]))
+    fresh["business"], fresh["social"] = report.get("business"), report.get("social")
+    return fresh
 

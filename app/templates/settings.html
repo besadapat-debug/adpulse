@@ -16,6 +16,11 @@
         <td class="r">{% if ok %}<span class="badge good">Configured</span>{% else %}<span class="badge warn">Not configured</span>{% endif %}</td></tr>{% endfor %}
     </tbody></table></div>
 </div>
+<div class="card" style="margin-top:14px" id="rates"><h2>Rate card</h2>
+  <p class="small muted">Your prices for prospect proposals (AUD, ex GST). They're scaled automatically by business size, industry and number of locations.</p>
+  <form id="rateForm"><div class="rates" id="rateFields"></div>
+    {% if user.role == 'owner' %}<div class="row" style="margin-top:12px"><button class="btn primary">Save rates</button><button type="button" class="btn ghost" id="rateReset">Reset to defaults</button></div>{% endif %}</form>
+</div>
 <div class="card" style="margin-top:14px" id="rules"><h2>Alert rules</h2><p class="small muted">Global rules apply to every client; add a client-specific rule to override one. Alerts post to Slack / email when <code>SLACK_WEBHOOK_URL</code> or SMTP settings are set.</p>
   <div class="tw"><table id="rulesTbl"></table></div>
   <div class="row" style="margin-top:12px"><select id="nrClient"><option value="">All clients</option>{% for c in clients %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}</select>
@@ -57,6 +62,20 @@ async function addUser() {
   catch (e) { toast(e.message); }
 }
 $('#agencyForm').onsubmit = async e => { e.preventDefault(); try { await api('/api/agency', { method: 'PATCH', json: Object.fromEntries(new FormData(e.target)) }); location.reload(); } catch (err) { toast(err.message); } };
-loadRules(); loadUsers();
+const RATE_LABELS = {
+  tracking_setup: ['Tracking & analytics setup', 'one-off'], website_fixes: ['Website conversion & SEO fixes', 'one-off, base'],
+  gbp_setup: ['Google Business Profile optimisation', 'one-off per location'], social_setup: ['New social profile setup', 'one-off per platform'],
+  social_monthly: ['Social media management', 'per platform per month'], seo_monthly: ['Local SEO & reviews programme', 'per month'],
+  ads_min_monthly: ['Ads management minimum', 'per month'], ads_pct: ['Ads management % of spend', '%'],
+  reporting_monthly: ['Dashboard & reporting', 'per month'], ad_spend_small: ['Suggested ad spend (small business)', 'per month, scaled by size'] };
+async function loadRates() {
+  const d = await api('/api/rate-card');
+  $('#rateFields').innerHTML = Object.entries(RATE_LABELS).map(([k, [l, u]]) => `<label class="f">${l}<span class="small muted">${u}</span>
+    <input name="${k}" type="number" min="0" step="10" value="${d.rates[k]}" ${'{{ user.role }}' !== 'owner' ? 'disabled' : ''}></label>`).join('');
+  const reset = $('#rateReset');
+  if (reset) reset.onclick = () => { Object.entries(d.defaults).forEach(([k, v]) => { const i = $(`#rateFields [name=${k}]`); if (i) i.value = v; }); toast('Defaults filled in. Click Save to keep them.'); };
+}
+$('#rateForm').onsubmit = async e => { e.preventDefault(); try { await api('/api/rate-card', { method: 'PUT', json: Object.fromEntries(new FormData(e.target)) }); toast('Rates saved'); } catch (err) { toast(err.message); } };
+loadRules(); loadUsers(); loadRates();
 </script>
 {% endblock %}

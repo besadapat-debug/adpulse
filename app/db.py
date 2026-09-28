@@ -282,6 +282,7 @@ MIGRATIONS = [
     "ALTER TABLE events ADD COLUMN company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL",
     "CREATE INDEX IF NOT EXISTS ix_events_company ON events(client_id, company_id)",
     "CREATE INDEX IF NOT EXISTS ix_events_contact ON events(contact_id)",
+    "ALTER TABLE agency ADD COLUMN rate_card TEXT DEFAULT ''",
 ]
 
 _lock = threading.RLock()

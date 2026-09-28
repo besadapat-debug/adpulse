@@ -50,7 +50,8 @@ Docker: `docker build -t adpulse . && docker run -p 8000:8000 -v adpulse:/data -
 | Ad engagement | Client → Ad engagement | Reach, frequency, video views, average watch time, completion rate, thumb-stop rate, shares/saves/comments — per platform and campaign |
 | People | Client → People | Full journey for visitors who opted in and identified themselves: which ad/campaign brought them, every page, time on each page, visits, value |
 | Companies (B2B) | Client → Companies | Businesses visiting the site (IP → company via IPinfo; set `IPINFO_TOKEN`), pages viewed, time, pricing interest, intent score |
-| Prospects & audits | `/prospects` | Audit any website (tracking pixels, mobile, CTAs, SEO, speed), links to their live ads in public ad libraries, pitch email, pipeline stages |
+| Prospects & audits | `/prospects` | Website audit + social media audit (profiles auto-found on their site; per-platform scores vs industry/size benchmarks), overall digital score, rank vs businesses you've audited, 3-tier proposal priced from your rate card, AHPRA notes for health businesses, pitch email, pipeline |
+| Rate card | Settings → Rate card | Your prices for proposals; scaled by business size, industry and locations |
 | Tracking snippet | `/t.js` | Consent-gated first-party events + UTMs + engaged time on page + identify-on-opt-in |
 
 ## Connectors

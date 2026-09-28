@@ -158,6 +158,26 @@ tr.sel td { background: var(--accent-soft); }
 .chk span { width: 16px; font-weight: 700; flex: none; }
 .chk.ok span { color: var(--good); } .chk.no span { color: var(--bad); } .chk.no { color: var(--text); } .chk.ok { color: var(--text-2); }
 
+/* prospect detail */
+.rings { display: flex; gap: 12px; align-items: flex-end; }
+.ringbox { display: grid; justify-items: center; gap: 4px; color: var(--text-2); }
+.score-ring.sm { width: 46px; height: 46px; border-width: 3px; }
+.score-ring.sm b { font-size: 15px; }
+.ptabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin: 6px 0 14px; overflow-x: auto; }
+.ptabs button { background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; padding: 8px 11px; font: inherit; font-weight: 500; color: var(--text-2); cursor: pointer; white-space: nowrap; }
+.ptabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+.dotwarn { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); vertical-align: middle; }
+.bizform { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+.plat { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; background: var(--surface); }
+.ptiers { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.ptier { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: var(--surface); display: block; }
+.ptier.rec { border: 2px solid var(--accent); }
+.ptier .price { font-size: 24px; font-weight: 700; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
+.ptier .price span { font-size: 13px; font-weight: 500; color: var(--text-3); }
+.ptier .li { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; padding: 5px 0; border-bottom: 1px dashed var(--border); }
+.ptier .li b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rates { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px 14px; }
+
 /* auth */
 .auth { min-height: 100vh; display: grid; place-items: center; padding: 20px; }
 .auth .card { width: min(380px, 100%); padding: 26px; display: grid; gap: 14px; }
@@ -171,6 +191,7 @@ tr.sel td { background: var(--accent-soft); }
   .btn.menu-btn { display: inline-flex; }
   .main { padding: 16px 16px 50px; }
   .g2, .g3, #pplGrid, #coGrid, #pGrid { grid-template-columns: 1fr !important; }
+  .rings { gap: 8px; }
 }
 @media print {
   .side, .no-print { display: none !important; }

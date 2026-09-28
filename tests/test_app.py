@@ -168,3 +168,60 @@ def test_prospects_api(client):
     assert d["pitch"]["subject"] and "unsubscribe" in d["pitch"]["body"]
     assert client.post("/api/prospects", json={"url": "http://127.0.0.1:8000"}).status_code == 400
     assert client.get("/prospects").status_code == 200
+
+
+def test_social_link_detection():
+    from app.services.social import detect_links
+    html = ('<a href="https://www.facebook.com/acmephysio/">f</a><a href="https://www.facebook.com/sharer/sharer.php?u=1">s</a>'
+            '<img src="https://www.facebook.com/tr?id=9"><a href="https://instagram.com/acme.physio">i</a>'
+            '<script>{"sameAs":["https:\\/\\/www.linkedin.com\\/company\\/acme-physio\\/"]}</script>'
+            '<a href="https://twitter.com/intent/tweet?text=x">t</a><a href="https://maps.app.goo.gl/Xyz123">m</a>')
+    d = detect_links(html)
+    assert d["facebook"] == "https://www.facebook.com/acmephysio"
+    assert d["instagram"].endswith("acme.physio") and "linkedin" in d and "google_business" in d
+    assert "x" not in d  # share/intent links are ignored
+
+
+def test_social_scoring_and_missing_platforms():
+    from app.services.social import social_summary
+    strong = social_summary({"google_business": {"exists": True, "rating": 4.8, "reviews": 90, "posts_30d": 4},
+                             "facebook": {"url": "u", "followers": 1500, "posts_30d": 8, "days_since_post": 2, "avg_engagement": 8},
+                             "instagram": {"url": "u", "followers": 1400, "posts_30d": 9, "days_since_post": 1, "avg_engagement": 30}}, "physio", "small")
+    weak = social_summary({"facebook": {"url": "u", "followers": 90, "posts_30d": 0, "days_since_post": 120, "avg_engagement": 0}}, "physio", "small")
+    assert strong["score"] >= 85 and weak["score"] < 30
+    assert "Google Business Profile" in weak["missing"] and "Instagram" in weak["missing"]
+
+
+def test_quote_tiers_scale_with_size():
+    from app.services import pricing, social
+    rep = {"checks": [{"key": "analytics", "ok": False}, {"key": "cta", "ok": False}], "score": 40}
+    ss = social.social_summary({}, "dental", "small")
+    small = pricing.build_quote(rep, {"industry": "dental", "size": "small", "locations": 1}, ss, pricing.DEFAULT_RATE_CARD)
+    large = pricing.build_quote(rep, {"industry": "dental", "size": "large", "locations": 3}, ss, pricing.DEFAULT_RATE_CARD)
+    s, l = small["tiers"], large["tiers"]
+    assert s[0]["monthly_total"] < s[1]["monthly_total"] < s[2]["monthly_total"]
+    assert l[1]["monthly_total"] > s[1]["monthly_total"] and l[1]["ad_spend"] > s[1]["ad_spend"]
+    assert s[1]["recommended"] and any("Tracking" in i["item"] for i in s[1]["setup"])
+
+
+def test_prospect_social_and_pricing_api(client):
+    opts = client.get("/api/prospects/options").json()
+    assert any(i["key"] == "pharmacy" and i["health"] for i in opts["industries"])
+    pid = client.get("/api/prospects").json()[0]["id"]
+    r = client.patch(f"/api/prospects/{pid}", json={"business": {"industry": "pharmacy", "size": "medium", "locations": 2, "mention_pricing": True},
+                                                   "social": {"instagram": {"url": "https://instagram.com/x", "followers": "1,200", "posts_30d": 3,
+                                                                            "days_since_post": 5, "avg_engagement": 20}}}).json()
+    assert r["business"]["industry"] == "pharmacy" and r["compliance"]
+    assert r["social_summary"]["platforms"]["instagram"]["score"] is not None
+    assert "Growth package would be $" in r["pitch"]["body"] and "AHPRA" in r["pitch"]["body"]
+    assert r["rank"]["overall_count"] >= 1
+
+
+def test_rate_card_changes_prices(client):
+    pid = client.get("/api/prospects").json()[0]["id"]
+    before = client.get(f"/api/prospects/{pid}").json()["quote"]["tiers"][1]["monthly_total"]
+    rc = client.get("/api/rate-card").json()["rates"]
+    client.put("/api/rate-card", json={**rc, "social_monthly": rc["social_monthly"] * 2, "seo_monthly": rc["seo_monthly"] * 2})
+    after = client.get(f"/api/prospects/{pid}").json()["quote"]["tiers"][1]["monthly_total"]
+    assert after > before
+    client.put("/api/rate-card", json=client.get("/api/rate-card").json()["defaults"])
