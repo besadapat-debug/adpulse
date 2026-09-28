@@ -16,7 +16,7 @@ from urllib.parse import quote, urlparse
 import httpx
 
 from .. import db
-from . import pricing, social as social_svc
+from . import competitors as comp_svc, market as market_svc, pricing, social as social_svc
 
 UA = "Mozilla/5.0 (compatible; AdPulseAudit/1.0; +https://adpulse.example/audit)"
 
@@ -292,6 +292,18 @@ def enrich(report: dict, prospect_id: int | None = None) -> dict:
         stats = social_svc.youtube_stats(yt["url"])
         if stats:
             yt.update({k: v for k, v in stats.items() if yt.get(k) in (None, "")})
+    comp = report.get("competitors") or {}
+    me = next((c for c in comp.get("list", []) if c.get("is_self")), None)
+    if me:   # their own Google listing turned up in the competitor search: use its public figures if none entered
+        g = soc.setdefault("google_business", {})
+        g["exists"] = True
+        for k in ("rating", "reviews"):
+            if g.get(k) in (None, "") and me.get(k) not in (None, ""):
+                g[k] = me[k]
+        if not g.get("url") and me.get("maps"):
+            g["url"] = me["maps"]
+    if not business.get("search_term"):
+        business["search_term"] = comp_svc.guess_term(report, business["industry"])
     summary = social_svc.social_summary(soc, business["industry"], business["size"])
     report["business"], report["social"], report["social_summary"] = business, soc, summary
     report["overall"] = social_svc.overall(report["score"], summary)
@@ -299,6 +311,10 @@ def enrich(report: dict, prospect_id: int | None = None) -> dict:
         c["problem"] = problem_label(c)
     report["quote"] = pricing.build_quote(report, business, summary)
     report["compliance"] = social_svc.health_compliance_notes(business["industry"])
+    report["competitor_summary"] = comp_svc.summary(report)
+    report["market"] = market_svc.comparison(business["industry"], report["quote"],
+                                             social_svc.INDUSTRIES.get(business["industry"], {}).get("health", False))
+    report["maps_link"] = comp_svc.maps_link(business.get("search_term") or "", business.get("area") or "") if business.get("area") else ""
     if prospect_id:
         report["rank"] = pricing.industry_rank(prospect_id, business["industry"], report["overall"]["score"])
     agency = (db.one("SELECT name FROM agency WHERE id=1") or {}).get("name", "")
@@ -341,6 +357,10 @@ def pitch_email(report: dict, agency: str, sender: str = "") -> dict:
                          key=lambda r: r["score"])
         if weakest:
             bullets.append(f"• {weakest[0]['label']}: {weakest[0]['notes'][0]}")
+    cs = report.get("competitor_summary")
+    if cs and cs.get("my_reviews") is not None and cs["top"]["reviews"] > max(10, 2 * cs["my_reviews"]):
+        bullets.append(f"• Google reviews: {cs['top']['name']} nearby has {cs['top']['reviews']} reviews and you have {cs['my_reviews']}. "
+                       f"Most people pick the business with more reviews.")
     if not bullets:
         bullets = ["• Your website and socials are in good shape, so there's room to scale with well-tracked ads."]
     score = (report.get("overall") or {}).get("score", report["score"])
@@ -353,7 +373,7 @@ def pitch_email(report: dict, agency: str, sender: str = "") -> dict:
     if business.get("mention_pricing") and quote.get("tiers"):
         g = next((t for t in quote["tiers"] if t.get("recommended")), quote["tiers"][0])
         setup = f" plus a one-off ${g['setup_total']:,} setup" if g["setup_total"] else ""
-        extra += f"To give you an idea of cost, our Growth package would be ${g['monthly_total']:,}/month{setup} (ex GST)"
+        extra += f"To give you an idea of cost, our {g['name']} package would be ${g['monthly_total']:,}/month{setup} (ex GST){', month to month' if g.get('lite') else ''}"
         pb = g.get("payback")
         if pb and quote.get("customer_value"):
             extra += (f". At about ${quote['customer_value']:,} profit a year from each regular customer, that pays for itself "

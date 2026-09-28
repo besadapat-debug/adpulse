@@ -72,7 +72,9 @@ const RATE_LABELS = {
   ads_min_monthly: ['Ads management minimum', 'per month'], ads_pct: ['Ads management % of spend', '%'],
   reporting_monthly: ['Dashboard & reporting', 'per month'], ad_spend_small: ['Suggested ad spend (small business)', 'per month, scaled by size'],
   starter_gbp: ['Starter: Google Business Profile clean-up', 'one-off'], starter_fixes: ['Starter: fix top 3 website problems', 'one-off'],
-  starter_monthly: ['Starter: Google posts & reviews (optional)', 'per month, no contract'] };
+  starter_monthly: ['Starter: Google posts & reviews (optional)', 'per month, no contract'],
+  lite_monthly: ['Local Lite plan (sole traders & small shops)', 'per month, no contract'], ads_flat_sole: ['Ads management, sole traders', 'flat, per month'],
+  ads_min_spend: ['Minimum ad spend before suggesting ads', 'per month'] };
 async function loadRates() {
   const d = await api('/api/rate-card');
   $('#rateFields').innerHTML = Object.entries(RATE_LABELS).map(([k, [l, u]]) => `<label class="f">${l}<span class="small muted">${u}</span>

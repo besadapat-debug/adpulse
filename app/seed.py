@@ -182,7 +182,7 @@ EXAMPLE_SITES = [
 
 
 EXAMPLE_SOCIAL = {
-    "ridgeway-plumbing.example": ({"industry": "trades", "size": "small", "locations": 1},
+    "ridgeway-plumbing.example": ({"industry": "trades", "size": "sole", "locations": 1, "area": "Example Heights VIC"},
                                   {"google_business": {"exists": True, "rating": 4.2, "reviews": 18, "posts_30d": 0},
                                    "facebook": {"url": "https://www.facebook.com/ridgewayplumbing.example", "followers": 240, "posts_30d": 1,
                                                 "days_since_post": 47, "avg_engagement": 1}}),
@@ -207,6 +207,10 @@ def seed_example_prospects():
         rep = analyse({"final_url": url, "html": html, "status": 200, "seconds": secs, "bytes": size, "sitemap": sitemap, "robots": True})
         business, social = EXAMPLE_SOCIAL.get(rep["domain"], ({}, {}))
         rep["business"], rep["social"] = business, social
+        if rep["domain"] == "ridgeway-plumbing.example":   # fictional nearby competitors so the Competitors tab has something to show
+            rep["competitors"] = {"list": [{"name": n, "rating": ra, "reviews": rv, "website": w, "manual": True} for n, ra, rv, w in [
+                ("Example Heights Plumbing Co (example)", 4.8, 212, "https://example.com"), ("Blue Tap Plumbing (example)", 4.6, 96, ""),
+                ("Rapid Drains (example)", 4.4, 41, "https://example.org"), ("Hills Hot Water (example)", 4.9, 27, "")]]}
         enrich(rep)
         status = {"ridgeway-plumbing.example": "contacted", "coastalcafes.example": "new", "summitelectrical.example": "meeting"}.get(rep["domain"], "new")
         pid = db.execute("INSERT INTO prospects (url, domain, name, score, report, status, is_example) VALUES (?,?,?,?,?,?,1)",

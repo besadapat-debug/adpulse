@@ -90,6 +90,16 @@ Or, if you'd rather let it sleep, schedule just a daily data sync instead:
 
 ---
 
+## Step 6 (optional): Find competitors automatically
+
+The **Competitors** tab can list similar businesses nearby with their Google ratings and review counts.
+
+1. In **Google Cloud Console** (same project as before) go to **APIs & Services → Library**, search **Places API (New)** and click **Enable**. Google asks for a billing account; it includes a free monthly allowance, which is plenty for a few audits a day.
+2. Go to **APIs & Services → Credentials → Create credentials → API key**. Copy the key. Click **Edit API key**, under **API restrictions** choose **Restrict key** and tick **Places API (New)**, then Save.
+3. In **Render → adpulse → Environment → Add Environment Variable**: key `GOOGLE_PLACES_API_KEY`, value = the key. Click **Save, rebuild and deploy**.
+
+Without the key, the tab still works: click **Open in Google Maps** and type in the top few competitors by hand.
+
 ## Good to know
 
 - **Updates:** when you get a new version of AdPulse, upload the changed files to GitHub the same way.

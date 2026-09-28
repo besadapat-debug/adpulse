@@ -26,6 +26,9 @@ DEFAULT_RATE_CARD = {
     "starter_gbp": 290,             # Starter, one-off: Google Business Profile clean-up (hours, photos, categories, services)
     "starter_fixes": 390,           # Starter, one-off: fix the top 3 website problems from the audit
     "starter_monthly": 290,         # Starter, optional month-to-month: Google posts + review requests
+    "lite_monthly": 290,            # Local Lite (sole traders & small shops), month to month: Google profile + reviews + report
+    "ads_flat_sole": 350,           # flat ads management fee for sole traders (instead of the minimum above)
+    "ads_min_spend": 1000,          # don't suggest ads below this monthly spend: too little data to optimise
 }
 SIZE_MULT = {"sole": 0.7, "small": 1.0, "medium": 1.4, "large": 2.0, "enterprise": 3.0}
 SPEND_MULT = {"sole": 0.4, "small": 1.0, "medium": 2.5, "large": 6.0, "enterprise": 12.0}
@@ -86,6 +89,18 @@ def _starter(report: dict, social_summary: dict, m: float, rc: dict) -> dict:
             "setup_total": setup_total, "monthly_total": monthly[0][1], "ad_spend": 0, "first_year": setup_total}
 
 
+def _lite(m: float, loc_mult: float, rc: dict) -> dict:
+    """Month-to-month plan priced for sole traders and small shops: the Google essentials, nothing else."""
+    base = rc["lite_monthly"] * (m ** 0.5) * loc_mult
+    items = [("Google Business Profile: weekly posts & photos", _r(base * 0.55), "keeps you active in Google Maps results"),
+             ("Review requests (SMS/QR card) & replies", _r(base * 0.3), "more 5-star reviews, every review answered"),
+             ("Live dashboard & monthly report", _r(base * 0.15), "calls, direction requests and website clicks")]
+    total = sum(i[1] for i in items)
+    return {"name": "Local Lite", "lite": True, "tagline": "Month to month. Cancel any time.",
+            "setup": [], "monthly": [{"item": a, "amount": b, "detail": c} for a, b, c in items],
+            "setup_total": 0, "monthly_total": total, "ad_spend": 0, "first_year": 12 * total}
+
+
 def build_quote(report: dict, business: dict, social_summary: dict, rc: dict | None = None) -> dict:
     rc = rc or rate_card()
     industry = business.get("industry") or "other"
@@ -122,7 +137,8 @@ def build_quote(report: dict, business: dict, social_summary: dict, rc: dict | N
     social_rate = rc["social_monthly"] * (0.8 + 0.2 * m)
     seo_rate = rc["seo_monthly"] * m * loc_mult
     spend = rc["ad_spend_small"] * SPEND_MULT.get(size, 1.0) * ind["mult"] * (1 + 0.15 * (locations - 1))
-    ads_fee = max(rc["ads_min_monthly"], spend * rc["ads_pct"] / 100)
+    spend = max(spend, rc["ads_min_spend"])
+    ads_fee = rc["ads_flat_sole"] if size == "sole" else max(rc["ads_min_monthly"], spend * rc["ads_pct"] / 100)
 
     def tier(name, social_n, seo_f, ads, spend_f, extras_setup=True):
         items_m = []
@@ -132,7 +148,9 @@ def build_quote(report: dict, business: dict, social_summary: dict, rc: dict | N
         if seo_f:
             items_m.append(("Local SEO & Google reviews programme", _r(seo_rate * seo_f), f"{locations} location(s)"))
         if ads:
-            items_m.append(("Paid ads management (Meta + Google)", _r(ads_fee * (spend_f ** 0.5)), f"{rc['ads_pct']:.0f}% of spend, min ${rc['ads_min_monthly']:,.0f}"))
+            items_m.append(("Paid ads management (Meta + Google)", _r(ads_fee * (spend_f ** 0.5)),
+                            f"flat fee; only worth it with ${rc['ads_min_spend']:,.0f}+/month ad spend" if size == "sole"
+                            else f"{rc['ads_pct']:.0f}% of spend, min ${rc['ads_min_monthly']:,.0f}"))
         items_m.append(("Live dashboard & monthly report", _r(rc["reporting_monthly"]), "AdPulse client report"))
         setup = list(one_off) if extras_setup else one_off[:1]
         missing_social = [p for p in social_list if not plats.get(p, {}).get("exists")]
@@ -146,13 +164,19 @@ def build_quote(report: dict, business: dict, social_summary: dict, rc: dict | N
                 "setup_total": setup_total, "monthly_total": month_total, "ad_spend": ad_spend,
                 "first_year": setup_total + 12 * month_total}
 
-    tiers = [
-        _starter(report, social_summary, m, rc),
-        tier("Essentials", 1, 0.6, False, 0, extras_setup=True),
-        tier("Growth", 2, 1.0, True, 1.0),
-        tier("Premium", len(expected), 1.3, True, 1.6),
-    ]
-    tiers[2]["recommended"] = True
+    starter = _starter(report, social_summary, m, rc)
+    essentials = tier("Essentials", 1, 0.6, False, 0, extras_setup=True)
+    growth = tier("Growth", 2, 1.0, True, 1.0)
+    if size == "sole":
+        lite = _lite(m, loc_mult, rc)
+        lite["recommended"] = True
+        tiers = [starter, lite, essentials, growth]
+    elif size == "small":
+        growth["recommended"] = True
+        tiers = [starter, _lite(m, loc_mult, rc), essentials, growth, tier("Premium", len(expected), 1.3, True, 1.6)]
+    else:
+        growth["recommended"] = True
+        tiers = [starter, essentials, growth, tier("Premium", len(expected), 1.3, True, 1.6)]
     try:
         value = float(business.get("customer_spend") or 0) * float(business.get("margin_pct") or 100) / 100
     except (TypeError, ValueError):

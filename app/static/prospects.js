@@ -3,7 +3,7 @@ const STATUSES = [['new', 'New'], ['contacted', 'Contacted'], ['meeting', 'Meeti
 const AREA_ORDER = ['Tracking', 'Conversion', 'SEO', 'Trust', 'Compliance'];
 const gradeOf = s => s == null ? '–' : s >= 85 ? 'A' : s >= 70 ? 'B' : s >= 55 ? 'C' : s >= 40 ? 'D' : 'E';
 const gradeClass = g => g === 'A' || g === 'B' ? 'good' : g === 'C' ? 'warn' : g === '–' ? '' : 'bad';
-const PTABS = [['overview', 'Overview'], ['social', 'Social media'], ['website', 'Website'], ['proposal', 'Proposal & fees'], ['pitch', 'Pitch email']];
+const PTABS = [['overview', 'Overview'], ['social', 'Social media'], ['website', 'Website'], ['competitors', 'Competitors'], ['proposal', 'Proposal & fees'], ['pitch', 'Pitch email']];
 let OPTS = null, curTab = 'overview', curId = null, curReport = null;
 
 async function prospectsInit() {
@@ -74,7 +74,7 @@ async function patchProspect(body, msg = 'Saved') {
 
 function renderTab(r) {
   const el = $('#pBody');
-  ({ overview: tabOverview, social: tabSocial, website: tabWebsite, proposal: tabProposal, pitch: tabPitch })[curTab](el, r);
+  ({ overview: tabOverview, social: tabSocial, website: tabWebsite, competitors: tabCompetitors, proposal: tabProposal, pitch: tabPitch })[curTab](el, r);
 }
 
 /* ---------- Overview ---------- */
@@ -87,10 +87,12 @@ function tabOverview(el, r) {
       <label class="f">Industry<select name="industry">${OPTS.industries.map(i => `<option value="${i.key}" ${i.key === b.industry ? 'selected' : ''}>${fmt.esc(i.label)}</option>`).join('')}</select></label>
       <label class="f">Business size<select name="size">${OPTS.sizes.map(s => `<option value="${s.key}" ${s.key === b.size ? 'selected' : ''}>${fmt.esc(s.label)}</option>`).join('')}</select></label>
       <label class="f">Locations<input name="locations" type="number" min="1" max="50" value="${b.locations || 1}" style="width:90px"></label>
+      <label class="f">Suburb / area<input name="area" value="${fmt.esc(b.area || '')}" placeholder="e.g. Berwick VIC" style="width:160px"></label>
       <button class="btn">Update</button>
     </form>
     <p class="small muted" style="margin-top:6px">${r.industry_guess && r.industry_guess === b.industry ? 'Industry was detected from their website. ' : ''}These set the benchmarks for scoring and the fees in the proposal.</p>
     ${rk.overall_count > 1 ? `<div class="callout small" style="margin:10px 0">Ranks <b>#${rk.industry_rank} of ${rk.industry_count}</b> ${fmt.esc((OPTS.industries.find(i => i.key === b.industry) || {}).label || '')} businesses you've audited, and <b>#${rk.overall_rank} of ${rk.overall_count}</b> overall. Lower-ranked businesses have the most room to improve.</div>` : ''}
+    ${compCallout(r)}
     ${ss.missing?.length ? `<div class="callout warn small" style="margin:10px 0">No ${ss.missing.join(', ')} found. For this industry, that's where customers look before choosing.</div>` : ''}
     ${ss.unassessed?.length ? `<div class="callout small" style="margin:10px 0">${ss.unassessed.join(', ')} ${ss.unassessed.length > 1 ? 'aren\'t' : 'isn\'t'} scored yet. Add a few figures in <a href="#" onclick="curTab='social';showProspect(curId);return false">Social media</a> for an exact score (scored as average until then).</div>` : ''}
     <h3 style="margin-top:14px">Biggest opportunities</h3>
@@ -178,7 +180,72 @@ function tabWebsite(el, r) {
   };
 }
 
+/* ---------- Competitors ---------- */
+function compCallout(r) {
+  const cs = r.competitor_summary; if (!cs) return '';
+  const me = cs.my_reviews == null ? 'their review count isn\'t known yet (add it in Social media → Google Business Profile)'
+    : `they have <b>${cs.my_reviews}</b> reviews${cs.my_rating ? ` (★${cs.my_rating})` : ''}, ranking <b>#${cs.rank} of ${cs.of}</b> nearby`;
+  return `<div class="callout ${cs.behind ? 'warn' : ''} small" style="margin:10px 0">Nearby competitors: typical business has <b>${cs.median_reviews}</b> Google reviews${cs.avg_rating ? ` (avg ★${cs.avg_rating})` : ''};
+    ${me}. Most reviewed: <b>${fmt.esc(cs.top.name)}</b> with ${cs.top.reviews}.</div>`;
+}
+function tabCompetitors(el, r) {
+  const b = r.business || {}, comp = (r.competitors || {}).list || [];
+  const gbp = (r.social || {}).google_business || {};
+  const maps = `https://www.google.com/maps/search/${encodeURIComponent(((b.search_term || '') + ' near ' + (b.area || '')).trim())}`;
+  const rows = [...comp.map((c, i) => ({ ...c, i })), ...(comp.some(c => c.is_self) ? [] : [{ name: (r.name || r.domain) + ' (them)', rating: gbp.rating, reviews: gbp.reviews, is_self: true, virtual: true }])]
+    .sort((a, b2) => (+b2.reviews || 0) - (+a.reviews || 0));
+  el.innerHTML = `
+    <p class="small muted">Similar businesses near them, compared on Google rating and number of reviews: the two things people check before they call. Public listing data only.</p>
+    <form id="compForm" class="payform">
+      <label class="f">What they do<input name="search_term" value="${fmt.esc(b.search_term || '')}" placeholder="e.g. plumber" style="width:160px"></label>
+      <label class="f">Suburb / area<input name="area" value="${fmt.esc(b.area || '')}" placeholder="e.g. Berwick VIC" style="width:170px"></label>
+      ${OPTS.places_enabled ? '<button class="btn primary">Find competitors</button>' : '<button class="btn">Save</button>'}
+      <a class="btn ghost" href="${maps}" target="_blank" rel="noopener">Open in Google Maps ↗</a>
+      ${OPTS.places_enabled ? '' : `<div class="small muted" style="flex:1 1 100%">Automatic search needs a Google Places API key (see DEPLOY.md). Until then, open Google Maps and add the top few by hand below.</div>`}
+    </form>
+    ${compCallout(r)}
+    ${rows.length > 1 || comp.length ? `<div class="tw"><table><thead><tr><th>Business</th><th class="r">Rating</th><th class="r">Reviews</th><th>Website</th><th></th></tr></thead><tbody>
+      ${rows.map(c => `<tr class="${c.is_self ? 'sel' : ''}"><td>${c.maps ? `<a href="${fmt.esc(c.maps)}" target="_blank" rel="noopener">${fmt.esc(c.name)}</a>` : fmt.esc(c.name)}${c.is_self ? ' <span class="badge accent">them</span>' : ''}${c.address ? `<div class="small muted">${fmt.esc(c.address)}</div>` : ''}</td>
+        <td class="r">${c.rating ? '★' + c.rating : '–'}</td><td class="r">${c.reviews ?? '–'}</td>
+        <td class="small">${c.website ? `<a href="${fmt.esc(c.website)}" target="_blank" rel="noopener">${fmt.esc(c.website.replace(/^https?:\/\/(www\.)?/, '').slice(0, 30))}</a>` : '<span class="muted">none</span>'}</td>
+        <td class="r">${c.virtual ? '' : `<button class="btn sm ghost" data-del="${c.i}" title="Remove">✕</button>`}</td></tr>`).join('')}
+    </tbody></table></div>` : ''}
+    <form id="compAdd" class="row" style="margin-top:12px;gap:8px;align-items:flex-end">
+      <label class="f" style="flex:1;min-width:180px">Add a competitor by hand<input name="name" placeholder="Business name" required></label>
+      <label class="f">Rating ★<input name="rating" type="number" step="0.1" min="0" max="5" style="width:80px"></label>
+      <label class="f">Reviews<input name="reviews" type="number" min="0" style="width:90px"></label>
+      <label class="f">Website<input name="website" placeholder="optional" style="width:160px"></label>
+      <button class="btn">Add</button></form>
+    <p class="small muted" style="margin-top:10px">Use this in the pitch: “${fmt.esc(r.competitor_summary?.top?.name || 'The busiest competitor near you')} has ${r.competitor_summary?.top?.reviews ?? 'far more'} Google reviews. Let's close that gap.” The review gap also appears on the leave-behind and in the pitch email.</p>`;
+  $('#compForm').onsubmit = async e => {
+    e.preventDefault();
+    const fd = Object.fromEntries(new FormData(e.target));
+    if (!OPTS.places_enabled) return patchProspect({ business: fd }, 'Saved');
+    toast('Searching Google…');
+    try { const res = await api(`/api/prospects/${curId}/competitors`, { method: 'POST', json: fd }); toast('Competitors found'); showProspect(curId, res); }
+    catch (err) { toast(err.message, 7000); }
+  };
+  $('#compAdd').onsubmit = e => {
+    e.preventDefault();
+    const fd = Object.fromEntries(new FormData(e.target));
+    patchProspect({ competitors: [...comp, { name: fd.name, rating: fd.rating ? +fd.rating : null, reviews: fd.reviews ? +fd.reviews : null, website: fd.website, manual: true }] }, 'Added');
+  };
+  $$('[data-del]').forEach(btn => btn.onclick = () => patchProspect({ competitors: comp.filter((_, i) => i !== +btn.dataset.del) }, 'Removed'));
+}
+
 /* ---------- Proposal & fees ---------- */
+function marketBox(m) {
+  if (!m) return '';
+  return `<details class="market" open><summary><b>What else they could pay for</b> <span class="small muted">· Australian market prices, researched ${fmt.esc(m.as_of)}</span></summary>
+    ${m.you.length ? `<div class="mk-you">${m.you.map(y => `<div>✓ ${fmt.esc(y)}</div>`).join('')}</div>` : ''}
+    <div class="callout small" style="margin:8px 0">${fmt.esc(m.tip)}</div>
+    <div class="tw"><table><thead><tr><th>Option</th><th class="r">Price (AUD)</th><th>Notes</th></tr></thead><tbody>
+      ${m.rows.map(x => `<tr${x.industry_specific ? ' class="sel"' : ''}><td>${fmt.esc(x.label)}${x.industry_specific ? ' <span class="badge accent">their industry</span>' : ''}</td>
+        <td class="r" style="white-space:nowrap">${fmt.esc(x.price)}</td><td class="small">${fmt.esc(x.note)} · <a href="${fmt.esc(x.url)}" target="_blank" rel="noopener">source</a></td></tr>`).join('')}
+    </tbody></table></div>
+    <p class="small muted">Prices change. Open the source before quoting a competitor's price to a client.</p></details>`;
+}
+
 function tabProposal(el, r) {
   const q = r.quote; if (!q) { el.innerHTML = '<div class="empty">No proposal yet.</div>'; return; }
   const money = v => '$' + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -198,10 +265,11 @@ function tabProposal(el, r) {
       <div class="small" style="margin-top:10px;font-weight:600">Optional afterwards</div>
       ${t.monthly.map(i => `<div class="li"><span>${fmt.esc(i.item.replace(' (optional)', ''))}<br><span class="muted">${fmt.esc(i.detail)}</span></span><b>${money(i.amount)}/mo</b></div>`).join('')}
       ${pb(t)}
-    </div>` : `<div class="ptier ${t.recommended ? 'rec' : ''}">
-      ${t.recommended ? '<div class="badge accent" style="margin-bottom:6px">Recommended</div>' : ''}
+    </div>` : `<div class="ptier ${t.recommended ? 'rec' : ''} ${t.lite ? 'lite' : ''}">
+      ${t.recommended || t.lite ? `<div class="row" style="gap:6px;margin-bottom:6px">${t.recommended ? '<span class="badge accent">Recommended</span>' : ''}${t.lite ? '<span class="badge good">No lock-in</span>' : ''}</div>` : ''}
       <h3 style="margin:0 0 4px;color:var(--text)">${t.name}</h3>
       <div class="price">${money(t.monthly_total)}<span>/month</span></div>
+      ${t.tagline ? `<div class="small muted">${fmt.esc(t.tagline)}</div>` : ''}
       <div class="small muted">${t.setup_total ? money(t.setup_total) + ' one-off setup' : 'No setup fee'}${t.ad_spend ? ` · suggested ad spend ${money(t.ad_spend)}/mo` : ''}</div>
       <div class="small" style="margin-top:10px;font-weight:600">Monthly</div>
       ${t.monthly.map(i => `<div class="li"><span>${fmt.esc(i.item)}<br><span class="muted">${fmt.esc(i.detail)}</span></span><b>${money(i.amount)}</b></div>`).join('')}
@@ -220,6 +288,7 @@ function tabProposal(el, r) {
       ${q.customer_value ? `<div class="small" style="align-self:center">Each new regular ≈ <b>${money(q.customer_value)}</b> profit a year</div>` : ''}
     </form>
     <div class="ptiers">${q.tiers.map(card).join('')}</div>
+    ${marketBox(r.market)}
     <div class="row" style="margin-top:12px;justify-content:space-between">
       <label class="row small" style="gap:6px"><input type="checkbox" id="mentionPrice" ${b.mention_pricing ? 'checked' : ''}> Mention prices in the pitch email</label>
       <div class="row"><a class="btn" href="/prospects/${r.id}/print" target="_blank" rel="noopener">🖨 Print leave-behind</a><button class="btn" id="copyProp">Copy proposal text</button></div></div>`;

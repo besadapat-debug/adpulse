@@ -198,12 +198,62 @@ def test_quote_tiers_scale_with_size():
     ss = social.social_summary({}, "dental", "small")
     small = pricing.build_quote(rep, {"industry": "dental", "size": "small", "locations": 1}, ss, pricing.DEFAULT_RATE_CARD)
     large = pricing.build_quote(rep, {"industry": "dental", "size": "large", "locations": 3}, ss, pricing.DEFAULT_RATE_CARD)
-    s, l = small["tiers"], large["tiers"]
-    assert [t["name"] for t in s] == ["Starter", "Essentials", "Growth", "Premium"]
-    assert s[1]["monthly_total"] < s[2]["monthly_total"] < s[3]["monthly_total"]
-    assert l[2]["monthly_total"] > s[2]["monthly_total"] and l[2]["ad_spend"] > s[2]["ad_spend"]
-    assert s[2]["recommended"] and any("Tracking" in i["item"] for i in s[2]["setup"])
-    assert s[0]["starter"] and 0 < s[0]["setup_total"] < s[2]["setup_total"] + s[2]["monthly_total"] and s[0]["payback"] is None
+    by = lambda q: {t["name"]: t for t in q["tiers"]}
+    s, l = by(small), by(large)
+    assert [t["name"] for t in small["tiers"]] == ["Starter", "Local Lite", "Essentials", "Growth", "Premium"]
+    assert [t["name"] for t in large["tiers"]] == ["Starter", "Essentials", "Growth", "Premium"]
+    assert s["Local Lite"]["monthly_total"] < s["Essentials"]["monthly_total"] < s["Growth"]["monthly_total"] < s["Premium"]["monthly_total"]
+    assert l["Growth"]["monthly_total"] > s["Growth"]["monthly_total"] and l["Growth"]["ad_spend"] > s["Growth"]["ad_spend"]
+    assert s["Growth"]["recommended"] and any("Tracking" in i["item"] for i in s["Growth"]["setup"])
+    assert s["Starter"]["starter"] and 0 < s["Starter"]["setup_total"] < s["Growth"]["setup_total"] + s["Growth"]["monthly_total"]
+    assert s["Starter"]["payback"] is None
+
+
+def test_sole_trader_pricing_and_market():
+    from app.services import market, pricing, social
+    rep = {"checks": [{"key": "analytics", "ok": False}], "score": 40}
+    ss = social.social_summary({}, "trades", "sole")
+    q = pricing.build_quote(rep, {"industry": "trades", "size": "sole", "locations": 1}, ss, pricing.DEFAULT_RATE_CARD)
+    t = {x["name"]: x for x in q["tiers"]}
+    assert list(t) == ["Starter", "Local Lite", "Essentials", "Growth"] and t["Local Lite"]["recommended"]
+    assert t["Local Lite"]["monthly_total"] <= 300 and t["Local Lite"]["setup_total"] == 0
+    assert t["Growth"]["ad_spend"] >= 1000      # never suggest ads below the minimum useful spend
+    assert any(i["amount"] == 350 for i in t["Growth"]["monthly"] if "ads" in i["item"].lower())
+    m = market.comparison("trades", q)
+    assert any("hipages" in r["label"] and r["industry_specific"] for r in m["rows"])
+    assert any("Local Lite" in y and "hipages" in y for y in m["you"])
+    assert all(r["url"].startswith("https://") for r in m["rows"])
+
+
+def test_competitors(client, monkeypatch):
+    from app.services import competitors
+    pid = next(p["id"] for p in client.get("/api/prospects").json() if p["domain"] == "ridgeway-plumbing.example")
+    r = client.get(f"/api/prospects/{pid}").json()
+    assert r["business"]["search_term"] == "plumber"
+    # by hand
+    r = client.patch(f"/api/prospects/{pid}", json={"competitors": [{"name": "Big Pipes", "rating": 4.8, "reviews": 240, "manual": True},
+                                                                   {"name": "Small Drains", "rating": 4.1, "reviews": 9, "manual": True}]}).json()
+    cs = r["competitor_summary"]
+    assert cs["top"]["name"] == "Big Pipes" and cs["my_reviews"] == 18 and cs["rank"] == 2
+    assert "Big Pipes nearby has 240 reviews" in r["pitch"]["body"]
+    assert "Fewer Google reviews than nearby competitors" in client.get(f"/prospects/{pid}/print").text
+    # automatic (Google Places), with the network call replaced
+    monkeypatch.setattr(competitors, "api_key", lambda: "k")
+    monkeypatch.setattr(competitors, "find", lambda term, area, d, n: [
+        {"name": "Ridgeway Plumbing", "rating": 4.3, "reviews": 20, "website": "https://ridgeway-plumbing.example", "is_self": True},
+        {"name": "Aqua Pros", "rating": 4.9, "reviews": 130, "website": "", "is_self": False}])
+    r = client.post(f"/api/prospects/{pid}/competitors", json={"search_term": "plumber", "area": "Berwick VIC"}).json()
+    names = [c["name"] for c in r["competitors"]["list"]]
+    assert "Aqua Pros" in names and "Big Pipes" in names and r["business"]["area"] == "Berwick VIC"
+    assert "maps/search/plumber+near+Berwick+VIC" in r["maps_link"]
+
+
+def test_competitor_find_needs_key(monkeypatch):
+    from app.services import competitors
+    monkeypatch.setattr(competitors, "api_key", lambda: "")
+    import pytest
+    with pytest.raises(ValueError):
+        competitors.find("plumber", "Berwick", "", "")
 
 
 def test_payback_calculator():
@@ -212,7 +262,7 @@ def test_payback_calculator():
     ss = social.social_summary({}, "pharmacy", "small")
     q = pricing.build_quote(rep, {"industry": "pharmacy", "size": "small", "customer_spend": 1000, "margin_pct": 30}, ss, pricing.DEFAULT_RATE_CARD)
     assert q["customer_value"] == 300
-    st, g = q["tiers"][0], q["tiers"][2]
+    st, g = q["tiers"][0], next(t for t in q["tiers"] if t["name"] == "Growth")
     assert st["payback"]["customers_per_year"] == round(st["setup_total"] / 300, 1)
     year = g["setup_total"] + 12 * (g["monthly_total"] + g["ad_spend"])
     assert g["payback"]["customers_per_month"] == round(year / 300 / 12, 1)
@@ -234,10 +284,10 @@ def test_prospect_social_and_pricing_api(client):
 
 def test_rate_card_changes_prices(client):
     pid = client.get("/api/prospects").json()[0]["id"]
-    before = client.get(f"/api/prospects/{pid}").json()["quote"]["tiers"][2]["monthly_total"]
+    before = client.get(f"/api/prospects/{pid}").json()["quote"]["tiers"][-2]["monthly_total"]
     rc = client.get("/api/rate-card").json()["rates"]
     client.put("/api/rate-card", json={**rc, "social_monthly": rc["social_monthly"] * 2, "seo_monthly": rc["seo_monthly"] * 2})
-    after = client.get(f"/api/prospects/{pid}").json()["quote"]["tiers"][2]["monthly_total"]
+    after = client.get(f"/api/prospects/{pid}").json()["quote"]["tiers"][-2]["monthly_total"]
     assert after > before
     client.put("/api/rate-card", json=client.get("/api/rate-card").json()["defaults"])
 

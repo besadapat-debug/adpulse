@@ -25,7 +25,7 @@ from .services import alerts as alerts_svc
 from .services import attribution as attr_svc
 from .services import audiences as aud_svc
 from .services import budget as budget_svc
-from .services import compliance, metrics, prospects as prospect_svc, visitors
+from .services import competitors as comp_svc, compliance, metrics, prospects as prospect_svc, visitors
 from .services.sync import scheduler, sync_client, sync_connection
 
 logging.basicConfig(level=logging.INFO)
@@ -559,7 +559,8 @@ def prospect_options(user=Depends(require_user)):
     from .services import social as social_svc
     return {"industries": [{"key": k, "label": v["label"], "health": v["health"], "expected": v["expected"]} for k, v in social_svc.INDUSTRIES.items()],
             "sizes": [{"key": k, "label": v["label"]} for k, v in social_svc.SIZES.items()],
-            "platforms": [{"key": k, "label": v["label"]} for k, v in social_svc.PLATFORMS.items()]}
+            "platforms": [{"key": k, "label": v["label"]} for k, v in social_svc.PLATFORMS.items()],
+            "places_enabled": bool(comp_svc.api_key())}
 
 
 def _load_prospect(pid: int) -> tuple[dict, dict]:
@@ -594,7 +595,7 @@ async def update_prospect(pid: int, request: Request, user=Depends(require_edito
     b = {k: v for k, v in body.items() if k in ("status", "notes")}
     if b:
         db.execute(f"UPDATE prospects SET {', '.join(f'{k}=?' for k in b)} WHERE id=?", (*b.values(), pid))
-    if any(k in body for k in ("business", "social", "name")):
+    if any(k in body for k in ("business", "social", "name", "competitors")):
         _, report = _load_prospect(pid)
         if isinstance(body.get("business"), dict):
             report["business"] = {**(report.get("business") or {}), **body["business"]}
@@ -609,6 +610,14 @@ async def update_prospect(pid: int, request: Request, user=Depends(require_edito
             report["social"] = soc
         if body.get("name"):
             report["name"] = str(body["name"])[:80]
+        if isinstance(body.get("competitors"), list):
+            clean = []
+            for c in body["competitors"][:30]:
+                if isinstance(c, dict) and str(c.get("name", "")).strip():
+                    clean.append({"name": str(c["name"]).strip()[:120], "rating": c.get("rating"), "reviews": c.get("reviews"),
+                                  "website": str(c.get("website") or "")[:300], "address": str(c.get("address") or "")[:200],
+                                  "maps": str(c.get("maps") or "")[:500], "is_self": bool(c.get("is_self")), "manual": bool(c.get("manual"))})
+            report["competitors"] = {**(report.get("competitors") or {}), "list": clean}
         report = prospect_svc.enrich(report, pid)
         _save_prospect(pid, report)
     return get_prospect(pid, user)
@@ -625,6 +634,11 @@ def print_prospect(request: Request, pid: int, prices: int = 1, user=Depends(req
               for i in report.get("top_issues", [])[:3]]
     social = [{"problem": f"No {m} profile found", "impact": "Customers check here before choosing, and find your competitors instead."}
               for m in (ss.get("missing") or [])[:2]]
+    cs = report.get("competitor_summary")
+    if cs and cs.get("my_reviews") is not None and cs["top"]["reviews"] > cs["my_reviews"]:
+        social.insert(0, {"problem": f"Fewer Google reviews than nearby competitors ({cs['my_reviews']} vs {cs['top']['reviews']})",
+                          "impact": f"{cs['top']['name']} has {cs['top']['reviews']} reviews. Most people choose the business with more reviews."})
+        social = social[:3]
     for plat in sorted((p for p in (ss.get("platforms") or {}).values() if p.get("exists") and p.get("score") is not None and p.get("notes")),
                        key=lambda p: p["score"])[:max(0, 3 - len(social))]:
         if plat["score"] < 70:
@@ -636,6 +650,28 @@ def print_prospect(request: Request, pid: int, prices: int = 1, user=Depends(req
         "growth": next((t for t in tiers if t.get("recommended")), None),
         "quote": report.get("quote") or {}, "show_prices": bool(prices),
         "agency": db.one("SELECT * FROM agency WHERE id=1") or {}, "today": f"{date.today().day} {date.today():%B %Y}"})
+
+
+@app.post("/api/prospects/{pid}/competitors")
+async def find_competitors(pid: int, request: Request, user=Depends(require_editor)):
+    """Look up similar businesses nearby on Google (Places API) and compare their ratings and reviews."""
+    body = await request.json()
+    _, report = _load_prospect(pid)
+    business = report.get("business") or {}
+    term = str(body.get("search_term") or business.get("search_term") or "").strip()[:60]
+    area = str(body.get("area") or business.get("area") or "").strip()[:80]
+    report["business"] = {**business, "search_term": term, "area": area}
+    try:
+        found = comp_svc.find(term, area, report.get("domain", ""), report.get("name", ""))
+    except ValueError as e:
+        report = prospect_svc.enrich(report, pid)
+        _save_prospect(pid, report)
+        raise HTTPException(400, str(e))
+    manual = [c for c in (report.get("competitors") or {}).get("list", []) if c.get("manual")]
+    report["competitors"] = {"list": found + manual, "query": f"{term} in {area}", "found_at": date.today().isoformat()}
+    report = prospect_svc.enrich(report, pid)
+    _save_prospect(pid, report)
+    return get_prospect(pid, user)
 
 
 @app.post("/api/prospects/{pid}/rescan")
