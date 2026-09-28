@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block main %}
+<div class="topbar"><div class="row"><button class="btn menu-btn" onclick="toggleMenu()">☰</button><div><h1>Settings &amp; alerts</h1><div class="sub">Agency branding, team, alert rules and platform app status</div></div></div></div>
+<div class="grid g2">
+  <form class="card" id="agencyForm"><h2>Agency branding</h2>
+    <div style="display:grid;gap:12px">
+      <label class="f">Agency name<input name="name" value="{{ agency.name }}"></label>
+      <div class="row"><label class="f">Brand colour<input type="color" name="brand_color" value="{{ agency.brand_color }}"></label><label class="f" style="flex:1">Logo URL<input name="logo_url" value="{{ agency.logo_url }}"></label></div>
+      <div><button class="btn primary">Save</button></div>
+    </div></form>
+  <div class="card"><h2>Platform developer apps</h2>
+    <p class="small muted">Each needs its own approved developer app. Set credentials in <code>.env</code> and restart. Until then, connections for that platform run in demo mode.</p>
+    <table><tbody>
+      {% for p, ok in oauth_status.items() %}<tr><td style="text-transform:capitalize">{{ {'google':'Google (Ads, GA4, Search Console, Business Profile)','meta':'Meta (Ads, Facebook, Instagram)','tiktok':'TikTok for Business','linkedin':'LinkedIn Marketing'}[p] }}</td>
+        <td class="r">{% if ok %}<span class="badge good">Configured</span>{% else %}<span class="badge warn">Not configured</span>{% endif %}</td></tr>{% endfor %}
+    </tbody></table></div>
+</div>
+<div class="card" style="margin-top:14px" id="rules"><h2>Alert rules</h2><p class="small muted">Global rules apply to every client; add a client-specific rule to override one. Alerts post to Slack / email when <code>SLACK_WEBHOOK_URL</code> or SMTP settings are set.</p>
+  <div class="tw"><table id="rulesTbl"></table></div>
+  <div class="row" style="margin-top:12px"><select id="nrClient"><option value="">All clients</option>{% for c in clients %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}</select>
+    <select id="nrKind"></select><input id="nrTh" type="number" step="0.01" placeholder="Threshold" style="width:110px"><input id="nrWin" type="number" value="3" style="width:80px" title="Window (days)">
+    <button class="btn" onclick="addRule()">Add rule</button></div>
+</div>
+<div class="card" style="margin-top:14px"><h2>Team</h2><div class="tw"><table id="users"></table></div>
+  {% if user.role == 'owner' %}<div class="row" style="margin-top:12px"><input id="uEmail" type="email" placeholder="email"><input id="uName" placeholder="name"><input id="uPw" type="password" placeholder="temp password (8+)">
+    <select id="uRole"><option value="member">Member</option><option value="viewer">Viewer (read-only)</option><option value="owner">Owner</option></select><button class="btn" onclick="addUser()">Invite</button></div>{% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const THRESH_FMT = { cpa_spike: 'pct', roas_drop: 'pct', spend_spike: 'pct', traffic_drop: 'pct', zero_conversions: 'money', ranking_drop: 'positions', sync_failure: 'n/a' };
+async function loadRules() {
+  const r = await api('/api/rules');
+  $('#nrKind').innerHTML = Object.entries(r.help).map(([k, h]) => `<option value="${k}" title="${h}">${k.replace('_', ' ')}</option>`).join('');
+  $('#rulesTbl').innerHTML = `<thead><tr><th>Rule</th><th>Scope</th><th>Threshold</th><th>Window (days)</th><th>Enabled</th><th></th></tr></thead><tbody>` + r.rules.map(x => `<tr>
+    <td><b>${x.kind.replace(/_/g, ' ')}</b><div class="small muted">${fmt.esc(r.help[x.kind])}</div></td><td>${x.client_name ? fmt.esc(x.client_name) : '<span class="badge">All clients</span>'}</td>
+    <td><input type="number" step="0.01" value="${x.threshold}" style="width:90px" data-id="${x.id}" data-f="threshold"> <span class="small muted">${THRESH_FMT[x.kind] === 'pct' ? '(0.4 = 40%)' : THRESH_FMT[x.kind]}</span></td>
+    <td><input type="number" value="${x.window_days}" style="width:70px" data-id="${x.id}" data-f="window_days"></td>
+    <td><input type="checkbox" ${x.enabled ? 'checked' : ''} data-id="${x.id}" data-f="enabled"></td>
+    <td><button class="btn sm" onclick='saveRule(${JSON.stringify(x)})'>Save</button></td></tr>`).join('') + '</tbody>';
+}
+async function saveRule(x) {
+  $$(`[data-id="${x.id}"]`).forEach(i => x[i.dataset.f] = i.type === 'checkbox' ? (i.checked ? 1 : 0) : +i.value);
+  await api('/api/rules', { json: x }); toast('Rule saved');
+}
+async function addRule() {
+  await api('/api/rules', { json: { client_id: +$('#nrClient').value || null, kind: $('#nrKind').value, threshold: +$('#nrTh').value, window_days: +$('#nrWin').value } });
+  loadRules();
+}
+async function loadUsers() {
+  const d = await api('/api/agency');
+  $('#users').innerHTML = '<thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Added</th></tr></thead><tbody>' + d.users.map(u => `<tr><td>${fmt.esc(u.name || '')}</td><td>${fmt.esc(u.email)}</td><td><span class="badge">${u.role}</span></td><td class="small muted">${u.created_at.slice(0, 10)}</td></tr>`).join('') + '</tbody>';
+}
+async function addUser() {
+  try { await api('/api/users', { json: { email: $('#uEmail').value, name: $('#uName').value, password: $('#uPw').value, role: $('#uRole').value } }); toast('User added — share their temporary password securely'); loadUsers(); }
+  catch (e) { toast(e.message); }
+}
+$('#agencyForm').onsubmit = async e => { e.preventDefault(); try { await api('/api/agency', { method: 'PATCH', json: Object.fromEntries(new FormData(e.target)) }); location.reload(); } catch (err) { toast(err.message); } };
+loadRules(); loadUsers();
+</script>
+{% endblock %}

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>{{ c.report_title }} · {{ c.name }}</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/chart.umd.min.js"></script>
+<style>
+  :root { --brand: {{ c.brand_color }}; }
+  .rep { max-width: 1040px; margin: 0 auto; padding: 32px 20px 60px; }
+  .rep-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding-bottom: 20px; border-bottom: 3px solid var(--brand); margin-bottom: 24px; flex-wrap: wrap; }
+  .rep-head img { max-height: 44px; }
+  .rep-head .mark { width: 44px; height: 44px; border-radius: 12px; background: var(--brand); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 20px; }
+  .rep h2 { margin-top: 6px; }
+  section { margin-bottom: 22px; }
+  .kpi { border-top: 3px solid var(--brand); }
+  footer { color: var(--text-3); font-size: 12px; text-align: center; margin-top: 30px; }
+</style>
+</head>
+<body>
+<div class="rep">
+  <div class="rep-head">
+    <div class="row" style="gap:14px">{% if c.logo_url %}<img src="{{ c.logo_url }}" alt="{{ c.name }}">{% else %}<div class="mark">{{ c.name[:1] }}</div>{% endif %}
+      <div><h1>{{ c.report_title }}</h1><div class="muted">{{ c.name }} · {{ performance.period[0] }} to {{ performance.period[1] }}</div></div></div>
+    <button class="btn no-print" onclick="print()">Download PDF</button>
+  </div>
+
+  <section><h2>Paid media at a glance</h2><div class="kpis" id="k"></div></section>
+  <section class="grid g2">
+    <div class="card"><h2>Spend and revenue by day</h2><div id="lg"></div><div class="chart-box"><canvas id="r1"></canvas></div></div>
+    <div class="card"><h2>Results by platform</h2><div class="tw"><table><thead><tr><th>Platform</th><th class="r">Spend</th><th class="r">Conv.</th><th class="r">CPA</th><th class="r">ROAS</th></tr></thead><tbody>
+      {% for p in performance.by_platform %}<tr><td>{{ p.label }}</td><td class="r" data-m="{{ p.spend }}"></td><td class="r">{{ '%.0f' % (p.conversions or 0) }}</td><td class="r" data-m2="{{ p.cpa or '' }}"></td><td class="r">{{ '%.2f×' % p.roas if p.roas else '—' }}</td></tr>{% endfor %}
+    </tbody></table></div></div>
+  </section>
+  <section class="card"><h2>Top campaigns</h2><div class="tw"><table><thead><tr><th>Campaign</th><th>Platform</th><th class="r">Spend</th><th class="r">Conv.</th><th class="r">Revenue</th><th class="r">ROAS</th></tr></thead><tbody>
+    {% for r in performance.campaigns[:10] %}<tr><td>{{ r.campaign_name }}</td><td class="small">{{ r.label }}</td><td class="r" data-m="{{ r.spend }}"></td><td class="r">{{ '%.0f' % (r.conversions or 0) }}</td><td class="r" data-m="{{ r.revenue }}"></td><td class="r">{{ '%.2f×' % r.roas if r.roas else '—' }}</td></tr>{% endfor %}
+  </tbody></table></div></section>
+  {% if organic.channels %}<section class="grid g2">
+    <div class="card"><h2>Website traffic by channel</h2><table><tbody>{% for ch in organic.channels %}<tr><td>{{ ch.channel }}</td><td class="r">{{ '{:,.0f}'.format(ch.sessions or 0) }} sessions</td><td class="r" data-d="{{ ch.sessions_change if ch.sessions_change is not none else '' }}"></td></tr>{% endfor %}</tbody></table></div>
+    <div class="card"><h2>Search visibility</h2>
+      <div class="kpis" style="grid-template-columns:1fr 1fr"><div class="kpi"><div class="l">Organic clicks</div><div class="v">{{ '{:,.0f}'.format(seo.totals.clicks or 0) }}</div></div><div class="kpi"><div class="l">Avg position</div><div class="v">{{ '%.1f' % (seo.totals.position or 0) }}</div></div></div>
+      <table><tbody>{% for q in seo.queries[:6] %}<tr><td>{{ q.query }}</td><td class="r">{{ q.clicks }} clicks</td><td class="r">#{{ '%.1f' % q.position }}</td></tr>{% endfor %}</tbody></table></div>
+  </section>{% endif %}
+  {% if email.campaigns %}<section class="card"><h2>Email</h2><div class="kpis">
+    <div class="kpi"><div class="l">Sent</div><div class="v">{{ '{:,}'.format(email.totals.sends) }}</div></div>
+    <div class="kpi"><div class="l">Open rate</div><div class="v">{{ '%.1f%%' % ((email.totals.open_rate or 0) * 100) }}</div></div>
+    <div class="kpi"><div class="l">Click rate</div><div class="v">{{ '%.2f%%' % ((email.totals.click_rate or 0) * 100) }}</div></div>
+    <div class="kpi"><div class="l">Revenue</div><div class="v" data-m="{{ email.totals.revenue }}"></div></div></div></section>{% endif %}
+  <footer>{{ c.report_footer or agency.name }}</footer>
+</div>
+<script src="/static/app.js"></script>
+<script>
+const D = {{ data_json | safe }};
+currency = D.client.currency || 'AUD';
+const t = D.performance.totals, ch = D.performance.changes;
+const k = (l, v, d, up = true) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="d">${delta(d, up)} <span class="muted">vs prior period</span></div></div>`;
+$('#k').innerHTML = k('Spend', fmt.money(t.spend), ch.spend) + k('Revenue', fmt.money(t.revenue), ch.revenue) + k('ROAS', fmt.x(t.roas), ch.roas) + k('Conversions', fmt.num(t.conversions), ch.conversions) + k('Cost per conversion', fmt.money2(t.cpa), ch.cpa, false);
+$$('[data-m]').forEach(e => e.textContent = fmt.money(+e.dataset.m));
+$$('[data-m2]').forEach(e => e.textContent = e.dataset.m2 ? fmt.money2(+e.dataset.m2) : '—');
+$$('[data-d]').forEach(e => e.innerHTML = e.dataset.d === '' ? '' : delta(+e.dataset.d));
+const byDate = {}; D.performance.daily.forEach(r => { byDate[r.date] = byDate[r.date] || { s: 0, r: 0 }; byDate[r.date].s += r.spend; byDate[r.date].r += r.revenue; });
+const dates = Object.keys(byDate).sort();
+const brand = getComputedStyle(document.documentElement).getPropertyValue('--brand').trim();
+$('#lg').innerHTML = legendHTML([{ label: 'Revenue', color: brand }, { label: 'Spend', color: cssVar('--s-other') }]);
+drawChart('r1', { type: 'line', data: { labels: dates.map(fmt.date), datasets: [
+  { label: 'Revenue', data: dates.map(d => byDate[d].r), borderColor: brand, borderWidth: 2, pointRadius: 0, tension: .3 },
+  { label: 'Spend', data: dates.map(d => byDate[d].s), borderColor: cssVar('--s-other'), borderWidth: 2, pointRadius: 0, tension: .3 }] },
+  options: { scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 7 } }, y: axis(fmt.compact) }, plugins: { tooltip: { ...tooltipStyle(), callbacks: { label: x => ` ${x.dataset.label}: ${fmt.money(x.raw)}` } } } } });
+</script>
+</body>
+</html>

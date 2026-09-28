@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Set up{% endblock %}
+{% block auth %}
+<div class="auth">
+  <form class="card" method="post" action="/setup">
+    <h1>Set up {{ app_name }}</h1>
+    <div class="muted">Create your agency and the owner account.</div>
+    <label class="f">Agency name<input name="agency" required></label>
+    <label class="f">Your name<input name="name"></label>
+    <label class="f">Email<input name="email" type="email" required></label>
+    <label class="f">Password (8+ characters)<input name="password" type="password" minlength="8" required></label>
+    <button class="btn primary" style="justify-content:center">Create account</button>
+  </form>
+</div>
+{% endblock %}

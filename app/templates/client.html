@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ client.name }}{% endblock %}
+{% block main %}
+<div class="topbar">
+  <div class="row"><button class="btn menu-btn" onclick="toggleMenu()">☰</button>
+    <span class="dot" style="background:{{ client.brand_color }};width:14px;height:14px;border-radius:5px"></span>
+    <div><h1>{{ client.name }}</h1><div class="sub" id="periodLabel"></div></div></div>
+  <div class="row no-print">
+    <div class="seg" id="range"><button data-d="7">7d</button><button data-d="30" class="on">30d</button><button data-d="90">90d</button></div>
+    <button class="btn" onclick="syncNow(this)">↻ Sync now</button>
+    <button class="btn primary" onclick="shareReport()">Share report</button>
+  </div>
+</div>
+<nav class="tabs no-print" id="tabs">
+  <a href="#performance">Paid performance</a><a href="#engagement">Ad engagement</a><a href="#organic">Web &amp; social</a><a href="#seo">SEO</a><a href="#email">Email</a>
+  <a href="#attribution">Attribution</a><a href="#people">People</a><a href="#companies">Companies</a><a href="#audiences">Audiences</a><a href="#budget">Budget</a>
+  <a href="#alerts">Alerts <span class="count" id="alertCount" hidden></span></a><a href="#connections">Connections</a><a href="#settings">Client settings</a>
+</nav>
+<div id="view"></div>
+
+<dialog id="connDlg"><form method="dialog" onsubmit="return submitConn(event)">
+  <div class="dh" id="connTitle">Connect</div><div class="db" id="connBody"></div>
+  <div class="df"><button class="btn" type="button" onclick="this.closest('dialog').close()">Cancel</button><button class="btn primary" id="connSubmit">Connect</button></div>
+</form></dialog>
+<dialog id="audDlg"><form method="dialog" onsubmit="return saveAudience(event)">
+  <div class="dh">New audience</div>
+  <div class="db">
+    <label class="f">Name<input name="name" required placeholder="e.g. Pricing-page visitors, score 60+"></label>
+    <div class="row">
+      <label class="f" style="flex:1">Min intent score<input name="min_score" type="number" min="0" max="100" value="60"></label>
+      <label class="f" style="flex:1">Max score<input name="max_score" type="number" min="0" max="100" value="100"></label>
+      <label class="f" style="flex:1">Lookback (days)<input name="lookback_days" type="number" min="1" max="365" value="30"></label>
+    </div>
+    <label class="f">Must include event (optional)<select name="required_event"><option value="">Any</option><option>pricing_view</option><option>add_to_cart</option><option>begin_checkout</option><option>form_start</option><option>email_click</option><option>product_view</option></select></label>
+    <label class="row small"><input type="checkbox" name="customers_only"> Existing customers only (for exclusions &amp; lookalike seeds)</label>
+    <label class="row small"><input type="checkbox" name="include_customers"> Include existing customers</label>
+    <div class="callout small" id="audPreview">Only contacts with recorded marketing consent are ever included.</div>
+  </div>
+  <div class="df"><button class="btn" type="button" onclick="previewAudience()">Preview size</button><button class="btn" type="button" onclick="this.closest('dialog').close()">Cancel</button><button class="btn primary">Create audience</button></div>
+</form></dialog>
+{% endblock %}
+{% block scripts %}
+<script>const CLIENT = {{ client | tojson }};</script>
+<script src="/static/client.js"></script>
+{% endblock %}

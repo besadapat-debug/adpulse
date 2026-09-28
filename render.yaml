@@ -1,0 +1,26 @@
+# Render Blueprint: free hosting for AdPulse, with data stored in Supabase.
+# Render → New → Blueprint → pick this GitHub repo. It will ask you for DATABASE_URL.
+# See DEPLOY.md for the step-by-step guide.
+services:
+  - type: web
+    name: adpulse
+    runtime: python
+    plan: free
+    region: singapore            # closest Render region to Australia; put Supabase in Singapore too
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips "*"
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DATABASE_URL          # Supabase "Session pooler" connection string
+        sync: false
+      - key: SECRET_KEY            # encrypts saved logins; never change it after first use
+        generateValue: true
+      - key: CRON_SECRET           # key for /tasks/sync?key=... (free scheduled syncs)
+        generateValue: true
+      - key: DEMO_MODE
+        value: "false"
+      - key: SYNC_INTERVAL_MINUTES
+        value: "60"

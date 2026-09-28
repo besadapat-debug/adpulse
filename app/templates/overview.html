@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}All clients{% endblock %}
+{% block main %}
+<div class="topbar">
+  <div class="row"><button class="btn menu-btn" onclick="toggleMenu()">☰</button>
+    <div><h1>All clients</h1><div class="sub">Paid media across every connected platform, compared with the previous period</div></div></div>
+  <div class="seg" id="range"><button data-d="7">7d</button><button data-d="30" class="on">30d</button><button data-d="90">90d</button></div>
+</div>
+<div class="kpis" id="kpis"></div>
+<div class="grid" style="grid-template-columns: minmax(0,2fr) minmax(0,1fr)">
+  <div class="card"><h2>Clients</h2><div class="tw"><table id="clientsTbl"></table></div></div>
+  <div class="card"><h2>Open alerts</h2><div id="alerts"></div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let days = 30;
+async function load() {
+  const d = await api('/api/overview?days=' + days);
+  const t = d.clients.reduce((a, c) => ({ spend: a.spend + c.spend, revenue: a.revenue + c.revenue, conv: a.conv + c.conversions, alerts: a.alerts + c.open_alerts }), { spend: 0, revenue: 0, conv: 0, alerts: 0 });
+  $('#kpis').innerHTML = [
+    ['Managed spend', fmt.money(t.spend)], ['Attributed revenue (platform-reported)', fmt.money(t.revenue)],
+    ['Blended ROAS', fmt.x(t.spend ? t.revenue / t.spend : null)], ['Conversions', fmt.num(t.conv)], ['Open alerts', t.alerts],
+  ].map(([l, v]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+  $('#clientsTbl').innerHTML = `<thead><tr><th>Client</th><th>Spend trend</th><th class="r">Spend</th><th class="r">Revenue</th><th class="r">ROAS</th><th class="r">CPA</th><th class="r">Sessions</th><th>Health</th></tr></thead><tbody>` +
+    d.clients.map(c => `<tr class="link" onclick="location.href='/clients/${c.client.id}'">
+      <td class="nw"><div class="row" style="gap:8px;flex-wrap:nowrap"><span class="dot" style="background:${c.client.brand_color}"></span><b>${fmt.esc(c.client.name)}</b></div><div class="small muted">${c.connections} connections</div></td>
+      <td>${sparkline(c.spark, cssVar('--s1'))}</td>
+      <td class="r">${fmt.money(c.spend)}<div class="small">${delta(c.spend_change)}</div></td>
+      <td class="r">${fmt.money(c.revenue)}</td>
+      <td class="r">${fmt.x(c.roas)}<div class="small">${delta(c.roas_change)}</div></td>
+      <td class="r">${fmt.money2(c.cpa)}<div class="small">${delta(c.cpa_change, false)}</div></td>
+      <td class="r">${fmt.compact(c.sessions)}</td>
+      <td>${c.errors ? `<span class="badge bad">⚠ ${c.errors} sync error</span>` : c.open_alerts ? `<span class="badge warn">⚑ ${c.open_alerts} alert${c.open_alerts > 1 ? 's' : ''}</span>` : '<span class="badge good">✓ Healthy</span>'}</td>
+    </tr>`).join('') + '</tbody>';
+  $('#alerts').innerHTML = d.alerts.length ? d.alerts.map(a => `<div class="alert-item"><div class="sev ${a.severity}">${a.severity === 'critical' ? '!' : '⚑'}</div>
+      <div><div class="t">${fmt.esc(a.title)}</div><div class="small muted">${fmt.esc(a.client_name)} · ${fmt.esc(a.detail)}</div></div>
+      <a class="small" href="/clients/${a.client_id}#alerts">View</a></div>`).join('') : '<div class="empty">No open alerts 🎉</div>';
+}
+$$('#range button').forEach(b => b.onclick = () => { $$('#range button').forEach(x => x.classList.remove('on')); b.classList.add('on'); days = +b.dataset.d; load(); });
+load();
+</script>
+{% endblock %}

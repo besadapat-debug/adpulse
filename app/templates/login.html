@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Sign in{% endblock %}
+{% block auth %}
+<div class="auth">
+  <form class="card" method="post" action="/login">
+    <div class="brand" style="padding:0"><div class="logo">{{ agency.name[:1] }}</div><div>{{ agency.name }}</div></div>
+    <h1>Sign in</h1>
+    {% if error %}<div class="callout warn">{{ error }}</div>{% endif %}
+    <label class="f">Email<input name="email" type="email" autocomplete="username" required {% if demo %}value="demo@agency.test"{% endif %}></label>
+    <label class="f">Password<input name="password" type="password" autocomplete="current-password" required></label>
+    <button class="btn primary" style="justify-content:center">Sign in</button>
+    {% if demo %}<div class="small muted">Demo login: demo@agency.test / demo1234</div>{% endif %}
+  </form>
+</div>
+{% endblock %}

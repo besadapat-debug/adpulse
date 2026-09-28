@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{{ agency.name }}{% endblock %} · {{ app_name }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/chart.umd.min.js"></script>
+{% block head %}{% endblock %}
+</head>
+<body>
+{% if user %}
+<div class="shell">
+  <aside class="side" id="side">
+    <div class="brand"><div class="logo">{{ agency.name[:1] }}</div><div>{{ agency.name }}<div class="small muted" style="font-weight:400">{{ app_name }}</div></div></div>
+    <nav class="nav">
+      <a href="/" class="{{ 'active' if page == 'overview' }}">▦ All clients</a>
+      <a href="/prospects" class="{{ 'active' if page == 'prospects' }}">◎ Prospects &amp; audits</a>
+      <a href="/settings" class="{{ 'active' if page == 'settings' }}">⚙ Settings &amp; alerts</a>
+      <div class="sect">Clients</div>
+      {% for c in clients %}
+      <a href="/clients/{{ c.id }}" class="{{ 'active' if client and client.id == c.id }}"><span class="dot" style="background:{{ c.brand_color }}"></span>{{ c.name }}</a>
+      {% endfor %}
+      <a href="#" onclick="document.getElementById('newClient').showModal();return false" class="muted">＋ Add client</a>
+      <div class="sect">Account</div>
+      <div class="small muted" style="padding:2px 10px 6px">{{ user.email }}</div>
+      <a href="/logout">↩ Sign out</a>
+    </nav>
+  </aside>
+  <main class="main">
+    {% if demo %}<div class="demo-banner no-print">Demo mode — connections marked “demo” use generated data. Add real platform credentials in <code>.env</code> to pull live data.</div>{% endif %}
+    {% block main %}{% endblock %}
+  </main>
+</div>
+<dialog id="newClient">
+  <form method="dialog" onsubmit="return createClient(event)">
+    <div class="dh">Add client</div>
+    <div class="db">
+      <label class="f">Client name<input name="name" required></label>
+      <div class="row">
+        <label class="f" style="flex:1">Business type<select name="industry"><option value="ecommerce">E-commerce</option><option value="services">Local / services</option><option value="b2b">B2B / SaaS</option></select></label>
+        <label class="f" style="flex:1">Privacy region<select name="region"><option>AU</option><option>NZ</option><option>EU</option><option>UK</option><option value="US-CA">US – California</option><option>US</option></select></label>
+      </div>
+      <label class="f">Monthly paid media budget<input name="monthly_budget" type="number" min="0" step="100" value="0"></label>
+    </div>
+    <div class="df"><button class="btn" type="button" onclick="this.closest('dialog').close()">Cancel</button><button class="btn primary">Create</button></div>
+  </form>
+</dialog>
+{% else %}
+{% block auth %}{% endblock %}
+{% endif %}
+<script src="/static/app.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
