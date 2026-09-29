@@ -32,6 +32,12 @@ SEO_QUERIES = {
 }
 
 
+def month_start_prev(d: date) -> date:
+    """First day of the month before d's month."""
+    first = d.replace(day=1)
+    return (first - timedelta(days=1)).replace(day=1)
+
+
 def _rng(*parts) -> random.Random:
     return random.Random(int(hashlib.md5("|".join(map(str, parts)).encode()).hexdigest()[:12], 16))
 
@@ -111,6 +117,59 @@ class DemoConnector(Connector):
                                            impressions=int(impressions), clicks=int(clicks), conversions=round(conv, 2),
                                            revenue=round(rev, 2)))
                 out.engagement_metrics.append(self._engagement(f"{self.platform[:3]}-{i+1}", name, d, impressions, clicks, r))
+        if self.platform in ("meta_ads", "google_ads") and not getattr(self, "_nodemo", False):
+            dstart = min(start.replace(day=1), month_start_prev(end))
+            rows = out.ad_metrics if dstart >= start else self._rows_between(dstart, end)
+            out.demographics = self._demographics(rows, ("impressions", "clicks", "spend", "conversions"), self.platform, dstart)
+        return out
+
+    def _rows_between(self, start, end):
+        self._nodemo = True
+        try:
+            return self._paid(start, end).ad_metrics
+        finally:
+            self._nodemo = False
+
+    AGES = ["18-24", "25-34", "35-44", "45-54", "55-64", "65+"]
+    REGIONS = ["Victoria", "New South Wales", "Queensland", "South Australia", "Western Australia"]
+    CITIES = ["Bentleigh East", "Moorabbin", "Clayton", "Oakleigh", "Brighton", "Caulfield", "Glen Waverley", "Cheltenham"]
+
+    def _demographics(self, rows: list[dict], metric_keys: tuple, platform: str, since: date | None = None) -> list[dict]:
+        """Split monthly totals across age, gender and location with a per-client pattern (some groups cheaper than others)."""
+        months: dict[str, dict] = {}
+        for r in rows:
+            m = months.setdefault(r["date"][:7], {k: 0.0 for k in metric_keys})
+            for k in metric_keys:
+                m[k] += r.get(k, 0) or 0
+        pr = _rng(self.client["id"], platform, "demo-shape")
+        age_w = [0.6 + pr.random() * 1.6 for _ in self.AGES]
+        age_eff = [0.5 + pr.random() * 1.2 for _ in self.AGES]
+        g_w, g_eff = {"Female": 0.8 + pr.random(), "Male": 0.6 + pr.random()}, {"Female": 0.7 + pr.random() * 0.8, "Male": 0.6 + pr.random() * 0.8}
+        reg_w = [6.0, 1.2, 0.8, 0.4, 0.3]
+        city_w = [0.5 + pr.random() * 2 for _ in self.CITIES]
+        out = []
+        for mon, tot in months.items():
+            y, mo = int(mon[:4]), int(mon[5:])
+            start = date(y, mo, 1)
+            if since and start < since:
+                continue                      # only whole months, so a partial month never overwrites a full one
+            end = (date(y + (mo == 12), mo % 12 + 1, 1) - timedelta(days=1))
+
+            def emit(dim, segs):
+                wsum = sum(w for _, w, _ in segs)
+                esum = sum(w * e for _, w, e in segs) or 1
+                for seg, w, e in segs:
+                    row = {"platform": platform, "dimension": dim, "segment": seg, "date_from": str(start), "date_to": str(end), "source": "demo"}
+                    for k in metric_keys:
+                        share = (w * e / esum) if k in ("conversions", "users_conv") else (w / wsum)
+                        row[k] = round(tot[k] * share, 2) if k in ("spend", "conversions", "users", "sessions") else int(tot[k] * share)
+                    out.append(row)
+            emit("age", [(a, age_w[i], age_eff[i]) for i, a in enumerate(self.AGES)])
+            emit("gender", [(g, g_w[g], g_eff[g]) for g in g_w])
+            emit("age_gender", [(f"{a} · {g}", age_w[i] * g_w[g], age_eff[i] * g_eff[g]) for i, a in enumerate(self.AGES) for g in g_w])
+            emit("region", [(rg, reg_w[i], 1.0) for i, rg in enumerate(self.REGIONS)])
+            if platform == "ga4":
+                emit("city", [(c, city_w[i], 1.0) for i, c in enumerate(self.CITIES)])
         return out
 
     VIDEO_HINTS = ("YouTube", "Spark", "UGC", "Story", "Smart+", "Awareness", "Promoted", "Advantage+", "Prospecting", "Lead Gen", "Consideration")
@@ -144,7 +203,24 @@ class DemoConnector(Connector):
                         "totalRevenue": ke * 110 * (0.8 + r.random() * 0.4)}
                 for m, v in vals.items():
                     out.organic_metrics.append(dict(platform="ga4", dimension=ch, metric=m, date=str(d), value=round(v, 2)))
+        if not getattr(self, "_nodemo", False):
+            dstart = min(start.replace(day=1), month_start_prev(end))
+            src = out.organic_metrics if dstart >= start else self._ga4_rows(dstart, end)
+            daily: dict[str, dict] = {}
+            for r in src:
+                row = daily.setdefault(r["date"], {"date": r["date"], "users": 0.0, "sessions": 0.0, "conversions": 0.0})
+                key = {"totalUsers": "users", "sessions": "sessions", "keyEvents": "conversions"}.get(r["metric"])
+                if key:
+                    row[key] += r["value"]
+            out.demographics = self._demographics(list(daily.values()), ("users", "sessions", "conversions"), "ga4", dstart)
         return out
+
+    def _ga4_rows(self, start, end):
+        self._nodemo = True
+        try:
+            return self._ga4(start, end).organic_metrics
+        finally:
+            self._nodemo = False
 
     def _seo(self, start, end) -> SyncResult:
         brand = self.client["name"].split()[0].lower()
@@ -200,8 +276,9 @@ class DemoConnector(Connector):
             reach = f * (0.05 + r.random() * 0.25)
             eng = reach * (0.015 + r.random() * 0.05)
             vals = {"followers": f, "reach": reach, "engagements": eng, "posts": 1 if r.random() < 0.4 else 0}
-            if self.platform == "google_business":
-                vals = {"profile_views": reach * 0.3, "calls": eng * 0.05, "direction_requests": eng * 0.08, "website_clicks": eng * 0.12}
+            if self.platform == "google_business":       # a local business: a few calls and direction requests a day
+                g = scale * (0.8 if d.weekday() >= 5 else 1.0) * (0.7 + r.random() * 0.6)
+                vals = {"profile_views": 45 * g, "calls": 1.6 * g, "direction_requests": 2.4 * g, "website_clicks": 1.2 * g}
             for m, v in vals.items():
                 out.organic_metrics.append(dict(platform=self.platform, dimension="", metric=m, date=str(d), value=round(v, 2)))
         return out

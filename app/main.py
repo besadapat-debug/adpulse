@@ -59,18 +59,28 @@ SESSION_TTL = 60 * 60 * 24 * 14
 def current_user(request: Request) -> dict | None:
     tok = request.cookies.get("session")
     data = unsign(tok) if tok else None
-    return db.one("SELECT id, email, name, role FROM users WHERE id=?", (data["uid"],)) if data else None
+    return db.one("SELECT id, email, name, role, client_id FROM users WHERE id=?", (data["uid"],)) if data else None
+
+
+# A client login can only read its own business: these pages/endpoints, GET only, and only for users.client_id.
+CLIENT_PATHS = re.compile(r"^/(?:$|logout$|clients/(?P<a>\d+)(?:/monthly)?$|api/platforms$|"
+                          r"api/clients/(?P<b>\d+)(?:/(?:performance|engagement|organic|seo|email|audience|local|monthly))?$)")
 
 
 def require_user(request: Request) -> dict:
     u = current_user(request)
     if not u:
         raise HTTPException(401, "Not signed in")
+    if u["role"] == "client":
+        m = CLIENT_PATHS.match(request.url.path)
+        cid = m and (m.group("a") or m.group("b"))
+        if not m or request.method != "GET" or (cid and int(cid) != u["client_id"]) or not u["client_id"]:
+            raise HTTPException(403, "This login can only see its own business")
     return u
 
 
 def require_editor(user: dict = Depends(require_user)) -> dict:
-    if user["role"] == "viewer":
+    if user["role"] in ("viewer", "client"):
         raise HTTPException(403, "Read-only account")
     return user
 
@@ -85,12 +95,16 @@ def require_owner(user: dict = Depends(require_user)) -> dict:
 async def http_exc(request: Request, exc: HTTPException):
     if exc.status_code == 401 and not request.url.path.startswith("/api"):
         return RedirectResponse("/login")
+    if exc.status_code == 403 and not request.url.path.startswith("/api") and request.method == "GET":
+        return RedirectResponse("/")
     return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 
 
 def ctx(request: Request, user: dict | None, **kw):
     return {"request": request, "user": user, "agency": db.one("SELECT * FROM agency WHERE id=1"), "app_name": settings.APP_NAME,
-            "clients": db.rows("SELECT id, name, brand_color FROM clients ORDER BY name") if user else [], "demo": settings.DEMO_MODE, **kw}
+            "clients": (db.rows("SELECT id, name, brand_color FROM clients WHERE id=?", (user["client_id"],)) if user and user["role"] == "client"
+                        else db.rows("SELECT id, name, brand_color FROM clients ORDER BY name") if user else []),
+            "is_client": bool(user and user["role"] == "client"), "demo": settings.DEMO_MODE and not (user and user["role"] == "client"), **kw}
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -140,6 +154,8 @@ def setup(agency: str = Form(...), name: str = Form(""), email: str = Form(...),
 # ---------------- pages ----------------
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request, user=Depends(require_user)):
+    if user["role"] == "client":
+        return RedirectResponse(f"/clients/{user['client_id']}#monthly")
     return templates.TemplateResponse(request, "overview.html", ctx(request, user, page="overview"))
 
 
@@ -233,7 +249,7 @@ def get_client(cid: int, user=Depends(require_user)):
     return _client(cid)
 
 
-EDITABLE = {"name", "industry", "currency", "brand_color", "logo_url", "report_title", "report_footer", "monthly_budget", "target_cpa", "target_roas", "region"}
+EDITABLE = {"name", "industry", "currency", "brand_color", "logo_url", "report_title", "report_footer", "monthly_budget", "target_cpa", "target_roas", "region", "area"}
 
 
 @app.patch("/api/clients/{cid}")
@@ -536,6 +552,136 @@ async def privacy_erase(cid: int, request: Request, user=Depends(require_editor)
 def report_link(cid: int, days: int = 30, valid_days: int = 90, user=Depends(require_user)):
     _client(cid)
     return {"url": f"{settings.BASE_URL}/r/{sign({'report': cid, 'days': days}, valid_days * 86400)}"}
+
+
+# uploads, audience, Google Maps & reviews, monthly report, client logins
+@app.post("/api/clients/{cid}/import")
+async def import_report(cid: int, file: UploadFile = File(...), platform: str = Form("auto"), period_from: str = Form(""),
+                        period_to: str = Form(""), user=Depends(require_editor)):
+    from .services import imports
+    _client(cid)
+    raw = await file.read()
+    if len(raw) > 15 * 1024 * 1024:
+        raise HTTPException(400, "File is too big (15 MB max). Export fewer rows or a shorter date range.")
+    try:
+        r = imports.import_csv(cid, raw, file.filename or "", platform, period_from, period_to, user["email"])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    db.audit(user["email"], "report_import", f"{cid}:{r['platform']}:{r['kind']}:{r['rows']}")
+    return r
+
+
+@app.get("/api/clients/{cid}/imports")
+def import_history(cid: int, user=Depends(require_editor)):
+    from .services import imports
+    return {"history": imports.history(cid), "platforms": imports.PLATFORMS}
+
+
+@app.get("/api/clients/{cid}/audience")
+def api_audience(cid: int, months: int = 3, user=Depends(require_user)):
+    from .services import audience
+    _client(cid)
+    return audience.client_audience(cid, max(1, min(months, 24)))
+
+
+@app.get("/api/clients/{cid}/local")
+def api_local(cid: int, user=Depends(require_user)):
+    from .services import local
+    _client(cid)
+    return local.summary(cid)
+
+
+@app.put("/api/clients/{cid}/local/{month}")
+async def put_local(cid: int, month: str, request: Request, user=Depends(require_editor)):
+    from .services import local
+    _client(cid)
+    body = await request.json()
+    try:
+        if isinstance(body.get("values"), dict):
+            local.save_month(cid, month, body["values"])
+        if isinstance(body.get("competitors"), list):
+            local.save_competitors(cid, month, body["competitors"])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return local.summary(cid)
+
+
+@app.post("/api/clients/{cid}/local/{month}/refresh")
+def refresh_local(cid: int, month: str, user=Depends(require_editor)):
+    from .services import local
+    _client(cid)
+    try:
+        local.refresh_reviews(cid, month)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return local.summary(cid)
+
+
+@app.get("/api/clients/{cid}/monthly")
+def api_monthly(cid: int, month: str = "", user=Depends(require_user)):
+    from .services import monthly
+    _client(cid)
+    if month and not re.fullmatch(r"\d{4}-\d{2}", month):
+        raise HTTPException(400, "Month must look like 2026-09")
+    return monthly.build(cid, month or None)
+
+
+def _monthly_page(request: Request, cid: int, month: str, shared: bool):
+    from .services import monthly
+    if month and not re.fullmatch(r"\d{4}-\d{2}", month):
+        month = ""
+    rep = monthly.build(cid, month or None)
+    return templates.TemplateResponse(request, "monthly.html", {"request": request, "r": rep, "shared": shared,
+                                                                 "c": _client(cid), "agency": db.one("SELECT * FROM agency WHERE id=1")})
+
+
+@app.get("/clients/{cid}/monthly", response_class=HTMLResponse)
+def monthly_page(request: Request, cid: int, month: str = "", user=Depends(require_user)):
+    return _monthly_page(request, cid, month, False)
+
+
+@app.post("/api/clients/{cid}/monthly-link")
+def monthly_link(cid: int, month: str = "", user=Depends(require_editor)):
+    _client(cid)
+    return {"url": f"{settings.BASE_URL}/m/{sign({'monthly': cid, 'month': month}, 120 * 86400)}"}
+
+
+@app.get("/m/{token}", response_class=HTMLResponse)
+def monthly_shared(request: Request, token: str):
+    data = unsign(token)
+    if not data or "monthly" not in data:
+        raise HTTPException(404, "Report link invalid or expired")
+    return _monthly_page(request, data["monthly"], data.get("month") or "", True)
+
+
+@app.get("/api/clients/{cid}/logins")
+def list_logins(cid: int, user=Depends(require_owner)):
+    return db.rows("SELECT id, email, name, created_at FROM users WHERE role='client' AND client_id=?", (cid,))
+
+
+@app.post("/api/clients/{cid}/logins")
+async def add_login(cid: int, request: Request, user=Depends(require_owner)):
+    _client(cid)
+    b = await request.json()
+    email = str(b.get("email", "")).strip().lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise HTTPException(400, "Enter a valid email address")
+    if len(b.get("password", "")) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters")
+    try:
+        db.execute("INSERT INTO users (email, name, password_hash, role, client_id) VALUES (?,?,?,'client',?)",
+                   (email, str(b.get("name", ""))[:80], hash_password(b["password"]), cid))
+    except Exception:
+        raise HTTPException(400, "That email already has a login")
+    db.audit(user["email"], "client_login_create", f"{cid}:{email}")
+    return list_logins(cid, user)
+
+
+@app.delete("/api/clients/{cid}/logins/{uid}")
+def delete_login(cid: int, uid: int, user=Depends(require_owner)):
+    db.execute("DELETE FROM users WHERE id=? AND role='client' AND client_id=?", (uid, cid))
+    db.audit(user["email"], "client_login_delete", f"{cid}:{uid}")
+    return list_logins(cid, user)
 
 
 # prospects (new-business audits)

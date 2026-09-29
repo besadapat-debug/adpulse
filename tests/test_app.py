@@ -380,3 +380,110 @@ def test_ad_campaigns_api(client):
     r = client.patch(f"/api/prospects/{pid}", json={"ad_campaigns": [{"name": "Flu shots", "platform": "google", "customers": 10, "value": 300, "evil": 1}]}).json()
     c = r["ad_campaigns"][0]
     assert c["name"] == "Flu shots" and "evil" not in c and c["calc"]["budget"] > 0 and c["calc"]["mgmt_fee"] > 0
+
+
+# ---------- uploads, audience, Google & reviews, monthly report, client logins ----------
+META_CAMPAIGNS = """Campaign name,Reporting starts,Reporting ends,Amount spent (AUD),Impressions,Reach,Link clicks,Results,Result indicator
+Flu shots – Search,2026-08-01,2026-08-31,"1,250.50",48000,21000,960,41,actions:lead
+Webster packs,2026-08-01,2026-08-31,640.00,30500,15000,310,9,actions:lead
+"""
+META_AGE_GENDER = """Campaign name,Age,Gender,Reporting starts,Reporting ends,Amount spent (AUD),Impressions,Link clicks,Results
+All,25-34,female,2026-08-01,2026-08-31,200,9000,180,12
+All,25-34,male,2026-08-01,2026-08-31,300,9500,120,2
+All,35-44,female,2026-08-01,2026-08-31,250,8000,170,14
+All,35-44,male,2026-08-01,2026-08-31,150,6000,60,3
+All,65+,female,2026-08-01,2026-08-31,100,3000,40,1
+"""
+GOOGLE_ADS = "Campaign report\nAugust 1, 2026 - August 31, 2026\nCampaign\tCost\tImpr.\tClicks\tConversions\tConv. value\nSearch – Flu\t$800.00\t12,000\t640\t30.00\t0.00\nTotal: Account\t$800.00\t12,000\t640\t30.00\t0.00\n"
+GA4_AGE = "# ----------------------------------------\n# Demographic details: Age\n# Start date: 20260801\n# End date: 20260831\n# ----------------------------------------\nAge,Active users,Sessions,Key events\n25-34,420,600,30\n35-44,380,520,25\n(not set),50,60,0\n"
+
+
+def _cid(client, name="Harbour Accounting"):
+    return db.one("SELECT id FROM clients WHERE name=?", (name,))["id"]
+
+
+def test_upload_reports(client):
+    cid = _cid(client)
+    r = client.post(f"/api/clients/{cid}/import", files={"file": ("meta.csv", META_CAMPAIGNS.encode(), "text/csv")}).json()
+    assert r["platform"] == "meta_ads" and r["kind"] == "ads" and r["rows"] == 2 and r["period"] == ["2026-08-01", "2026-08-31"]
+    got = db.one("SELECT SUM(spend) s, SUM(conversions) c FROM ad_metrics WHERE client_id=? AND account_id='upload'", (cid,))
+    assert round(got["s"], 2) == 1890.5 and round(got["c"], 2) == 50
+    # Google Ads TSV in UTF-16 with a title line, date range line and a Total row
+    r = client.post(f"/api/clients/{cid}/import", files={"file": ("g.csv", GOOGLE_ADS.encode("utf-16"), "text/csv")}).json()
+    assert r["platform"] == "google_ads" and r["rows"] == 1 and r["period"] == ["2026-08-01", "2026-08-31"]
+    # demographics
+    r = client.post(f"/api/clients/{cid}/import", files={"file": ("age.csv", META_AGE_GENDER.encode(), "text/csv")}).json()
+    assert r["kind"] == "demographics"
+    r = client.post(f"/api/clients/{cid}/import", files={"file": ("ga.csv", GA4_AGE.encode(), "text/csv")}).json()
+    assert r["platform"] == "ga4" and r["kind"] == "demographics" and r["period"] == ["2026-08-01", "2026-08-31"]
+    # bad file
+    bad = client.post(f"/api/clients/{cid}/import", files={"file": ("x.csv", b"hello,world\n1,2\n", "text/csv")})
+    assert bad.status_code == 400 and "headings" in bad.json()["detail"]
+    assert len(client.get(f"/api/clients/{cid}/imports").json()["history"]) >= 4
+
+
+def test_audience_insights(client):
+    cid = _cid(client)
+    db.execute("DELETE FROM demographics WHERE client_id=? AND source!='upload'", (cid,))
+    a = client.get(f"/api/clients/{cid}/audience?months=24").json()
+    ages = {s["segment"]: s for s in a["ads"]["age"]["segments"]}
+    assert ages["35-44"]["conversions"] == 17 and ages["25-34"]["spend"] == 500
+    assert a["ads"]["gender"]["segments"] and a["web"]["age"]["segments"]
+    texts = " ".join(i["text"] for i in a["insights"])
+    assert "cheapest customers" in texts and "Most website visitors" in texts
+
+
+def test_local_reviews_and_monthly_report(client):
+    cid = _cid(client)
+    client.patch(f"/api/clients/{cid}", json={"area": "Bentleigh VIC"})
+    s = client.put(f"/api/clients/{cid}/local/2026-07", json={"values": {"calls": 40, "direction_requests": 60, "reviews_total": 50, "rating": 4.6}}).json()
+    s = client.put(f"/api/clients/{cid}/local/2026-08", json={"values": {"calls": 52, "direction_requests": 70, "website_clicks": 30, "reviews_total": 56, "rating": 4.7},
+                                                              "competitors": [{"name": "Big Rival", "rating": 4.8, "reviews": 120}, {"name": "Small Rival", "reviews": 20}]}).json()
+    aug = next(x for x in s["series"] if x["month"] == "2026-08")
+    assert aug["calls"] == 52 and aug["new_reviews"] == 6
+    m = client.get(f"/api/clients/{cid}/monthly?month=2026-08").json()
+    text = " ".join(" ".join(x["lines"]) for x in m["sections"])
+    assert "52 people called you" in text and "Big Rival leads with 120" in text and "You rank #2 of 3" in text
+    assert "Your ads" in [x["title"] for x in m["sections"]] and m["next_steps"]
+    assert "In August 2026" in m["headline"]
+    page = client.get(f"/clients/{cid}/monthly?month=2026-08")
+    assert page.status_code == 200 and "do next month" in page.text and "52 people called you" in page.text
+    link = client.post(f"/api/clients/{cid}/monthly-link?month=2026-08").json()["url"]
+    token = link.split("/m/")[1]
+    with TestClient(app) as anon:
+        assert "52 people called you" in anon.get(f"/m/{token}").text
+        assert anon.get("/m/garbage").status_code == 404
+    assert client.put(f"/api/clients/{cid}/local/2026-8", json={"values": {"calls": 1}}).status_code == 400
+
+
+def test_client_login_sees_only_own_business(client):
+    cid = _cid(client)
+    other = _cid(client, "Stride Running Co")
+    r = client.post(f"/api/clients/{cid}/logins", json={"email": "owner@harbour.example", "password": "harbour123", "name": "Sam"})
+    assert r.status_code == 200 and r.json()[0]["email"] == "owner@harbour.example"
+    assert client.post(f"/api/clients/{cid}/logins", json={"email": "owner@harbour.example", "password": "harbour123"}).status_code == 400
+    with TestClient(app) as c:
+        assert c.post("/login", data={"email": "owner@harbour.example", "password": "harbour123"}, follow_redirects=False).status_code == 303
+        home = c.get("/", follow_redirects=False)
+        assert home.status_code in (302, 307) and home.headers["location"].startswith(f"/clients/{cid}")
+        assert c.get(f"/clients/{cid}").status_code == 200
+        for ok in [f"/api/clients/{cid}/monthly", f"/api/clients/{cid}/local", f"/api/clients/{cid}/audience", f"/api/clients/{cid}/performance"]:
+            assert c.get(ok).status_code == 200, ok
+        for bad in [f"/api/clients/{other}/performance", "/api/overview", "/api/prospects", f"/api/clients/{cid}/people", f"/api/clients/{cid}/connections",
+                    "/api/agency", f"/api/clients/{cid}/imports", "/api/rate-card"]:
+            assert c.get(bad).status_code == 403, bad
+        assert c.patch(f"/api/clients/{cid}", json={"name": "x"}).status_code == 403
+        assert c.put(f"/api/clients/{cid}/local/2026-08", json={"values": {"calls": 1}}).status_code == 403
+        assert c.get(f"/clients/{other}", follow_redirects=False).status_code in (302, 307)
+        page = c.get(f"/clients/{cid}").text
+        assert "Prospects &amp; audits" not in page and "Upload data" not in page and "Monthly report" in page
+    uid = client.get(f"/api/clients/{cid}/logins").json()[0]["id"]
+    assert client.delete(f"/api/clients/{cid}/logins/{uid}").json() == []
+
+
+def test_demo_sync_fills_demographics(client):
+    cid = _cid(client, "Stride Running Co")
+    a = client.get(f"/api/clients/{cid}/audience?months=3").json()
+    assert a["ads"]["age"]["segments"] and a["web"]["city"]["segments"] and a["insights"]
+    loc = client.get(f"/api/clients/{cid}/local").json()
+    assert loc["ranking"] and loc["series"]

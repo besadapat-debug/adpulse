@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 from ..config import settings
 from ..oauth import refresh_if_needed
-from .base import Connector, ConnectorError, SyncResult
+from .base import Connector, ConnectorError, SyncResult, demographic_months, merge_segments, month_end
 
 
 def _chunks(start: date, end: date, days: int):
@@ -51,7 +51,34 @@ class MetaAds(Connector):
                 if not nxt:
                     break
                 body = self.check(h.get(nxt))
+            try:
+                out.demographics = self._demographics(h, url, end, conv_types)
+            except Exception:
+                pass          # breakdowns are extra; never fail the core spend sync over them
         return out
+
+    def _demographics(self, h, url: str, end: date, conv_types: set) -> list[dict]:
+        """Age, gender and region breakdowns per calendar month (group totals from Meta, never individuals)."""
+        rows = []
+        for m_start, m_end in demographic_months(end):
+            for breakdown, dims in (("age,gender", ("age", "gender")), ("region", ("region",))):
+                body = self.check(h.get(url, params={
+                    "access_token": self.creds["access_token"], "level": "account", "breakdowns": breakdown,
+                    "fields": "spend,impressions,reach,clicks,actions", "limit": 500,
+                    "time_range": f'{{"since":"{m_start}","until":"{m_end}"}}'}))
+                for r in body.get("data", []):
+                    vals = {"spend": float(r.get("spend", 0) or 0), "impressions": int(r.get("impressions", 0) or 0),
+                            "reach": int(r.get("reach", 0) or 0), "clicks": int(r.get("clicks", 0) or 0),
+                            "conversions": sum(float(a["value"]) for a in r.get("actions", []) if a["action_type"] in conv_types)}
+                    segs = [(d, r.get(d, "Unknown")) for d in dims]
+                    if len(dims) == 2:
+                        segs.append(("age_gender", f"{r.get('age', 'Unknown')} · {str(r.get('gender', 'unknown')).title()}"))
+                    for dim, seg in segs:
+                        seg = str(seg).title() if dim == "gender" else str(seg)
+                        rows.append({"dimension": dim, "segment": seg, "date_from": str(m_start),
+                                     "date_to": str(month_end(m_start)),
+                                     "source": "api", **vals})
+        return merge_segments(rows)
 
 
     def _engagement(self, r: dict) -> dict:
@@ -117,7 +144,35 @@ class GoogleAds(Connector):
                                 engagements=int(m.get("engagements", 0) or 0)))
             except Exception:
                 pass  # engagement is optional; never fail the core spend sync over it
+            try:
+                out.demographics = self._demographics(h, url, headers, end)
+            except Exception:
+                pass
         return out
+
+    AGE = {"AGE_RANGE_18_24": "18-24", "AGE_RANGE_25_34": "25-34", "AGE_RANGE_35_44": "35-44", "AGE_RANGE_45_54": "45-54",
+           "AGE_RANGE_55_64": "55-64", "AGE_RANGE_65_UP": "65+"}
+
+    def _demographics(self, h, url, headers, end: date) -> list[dict]:
+        rows = []
+        m0 = demographic_months(end)[0][0]
+        for view, field, fmtseg, dim in (("age_range_view", "ad_group_criterion.age_range.type", lambda v: self.AGE.get(v, "Unknown"), "age"),
+                                         ("gender_view", "ad_group_criterion.gender.type", lambda v: {"FEMALE": "Female", "MALE": "Male"}.get(v, "Unknown"), "gender")):
+            q = (f"SELECT {field}, segments.month, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions "
+                 f"FROM {view} WHERE segments.date BETWEEN '{m0}' AND '{end}'")
+            resp = h.post(url, headers=headers, json={"query": q})
+            if resp.status_code >= 400:
+                continue
+            for batch in resp.json():
+                for r in batch.get("results", []):
+                    crit = r.get("adGroupCriterion", {})
+                    raw = (crit.get("ageRange") or crit.get("gender") or {}).get("type", "")
+                    m = r.get("metrics", {})
+                    ms = date.fromisoformat(r["segments"]["month"])
+                    rows.append({"dimension": dim, "segment": fmtseg(raw), "date_from": str(ms), "date_to": str(month_end(ms)), "source": "api",
+                                 "spend": int(m.get("costMicros", 0)) / 1e6, "impressions": int(m.get("impressions", 0)),
+                                 "clicks": int(m.get("clicks", 0)), "conversions": float(m.get("conversions", 0))})
+        return merge_segments(rows)
 
 
 class TikTokAds(Connector):

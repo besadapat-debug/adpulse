@@ -158,6 +158,31 @@ def seed(email="demo@agency.test", password="demo1234", sync=True) -> None:
             db.execute("INSERT INTO audiences (client_id, name, definition) VALUES (?,?,?)", (cid, name, json.dumps(d)))
         if sync:
             sync_client(cid, full=True)
+        if "google_business" in spec["platforms"]:
+            seed_local(cid, r)
+
+
+def seed_local(cid: int, r: random.Random) -> None:
+    """Demo Google reviews history and a few fictional nearby competitors, so the Google & reviews tab has something to show."""
+    from .services import local
+    db.execute("UPDATE clients SET area=? WHERE id=?", ("Example Heights VIC", cid))
+    today = datetime.now(timezone.utc).date()
+    months = []
+    y, m = today.year, today.month
+    for _ in range(6):
+        m -= 1
+        if m == 0:
+            y, m = y - 1, 12
+        months.append(f"{y}-{m:02d}")
+    months.reverse()
+    reviews = r.randint(30, 90)
+    comps = [("Example Heights Co (example)", 4.7, r.randint(150, 260)), ("Bayside Rivals (example)", 4.4, r.randint(60, 140)),
+             ("Corner Street Co (example)", 4.8, r.randint(20, 60))]
+    for mon in months:
+        reviews += r.randint(2, 9)
+        local.save_month(cid, mon, {"reviews_total": reviews, "rating": round(4.4 + r.random() * 0.5, 1)})
+        comps = [(n, rt, v + r.randint(1, 7)) for n, rt, v in comps]
+        local.save_competitors(cid, mon, [{"name": n, "rating": rt, "reviews": v} for n, rt, v in comps])
 
 
 EXAMPLE_SITES = [

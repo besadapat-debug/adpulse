@@ -16,14 +16,16 @@
   <aside class="side" id="side">
     <div class="brand"><div class="logo">{{ agency.name[:1] }}</div><div>{{ agency.name }}<div class="small muted" style="font-weight:400">{{ app_name }}</div></div></div>
     <nav class="nav">
+      {% if not is_client %}
       <a href="/" class="{{ 'active' if page == 'overview' }}">▦ All clients</a>
       <a href="/prospects" class="{{ 'active' if page == 'prospects' }}">◎ Prospects &amp; audits</a>
       <a href="/settings" class="{{ 'active' if page == 'settings' }}">⚙ Settings &amp; alerts</a>
-      <div class="sect">Clients</div>
+      {% endif %}
+      <div class="sect">{{ 'Your business' if is_client else 'Clients' }}</div>
       {% for c in clients %}
       <a href="/clients/{{ c.id }}" class="{{ 'active' if client and client.id == c.id }}"><span class="dot" style="background:{{ c.brand_color }}"></span>{{ c.name }}</a>
       {% endfor %}
-      <a href="#" onclick="document.getElementById('newClient').showModal();return false" class="muted">＋ Add client</a>
+      {% if not is_client %}<a href="#" onclick="document.getElementById('newClient').showModal();return false" class="muted">＋ Add client</a>{% endif %}
       <div class="sect">Account</div>
       <div class="small muted" style="padding:2px 10px 6px">{{ user.email }}</div>
       <a href="/logout">↩ Sign out</a>

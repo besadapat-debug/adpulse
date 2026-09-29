@@ -6,7 +6,7 @@ from datetime import date
 from urllib.parse import quote
 
 from ..oauth import refresh_if_needed
-from .base import Connector, ConnectorError, SyncResult
+from .base import Connector, ConnectorError, SyncResult, demographic_months, merge_segments, month_end
 
 
 class GA4(Connector):
@@ -39,7 +39,31 @@ class GA4(Connector):
                 offset += len(rows)
                 if not rows or offset >= int(body.get("rowCount", 0)):
                     break
+            try:
+                out.demographics = self._demographics(h, url, headers, end)
+            except Exception:
+                pass     # needs Google signals turned on in GA4; never fail the core sync over it
         return out
+
+    def _demographics(self, h, url, headers, end: date) -> list[dict]:
+        m0 = demographic_months(end)[0][0]
+        rows = []
+        for dim_name, dim in (("userAgeBracket", "age"), ("userGender", "gender"), ("city", "city"), ("region", "region")):
+            resp = h.post(url, headers=headers, json={
+                "dateRanges": [{"startDate": str(m0), "endDate": str(end)}],
+                "dimensions": [{"name": "yearMonth"}, {"name": dim_name}],
+                "metrics": [{"name": "totalUsers"}, {"name": "sessions"}, {"name": "keyEvents"}], "limit": 1000})
+            if resp.status_code >= 400:
+                continue
+            for r in resp.json().get("rows", []):
+                ym, seg = r["dimensionValues"][0]["value"], r["dimensionValues"][1]["value"]
+                ms = date(int(ym[:4]), int(ym[4:]), 1)
+                if dim == "gender":
+                    seg = seg.title()
+                mv = [float(x["value"] or 0) for x in r["metricValues"]]
+                rows.append({"platform": "ga4", "dimension": dim, "segment": seg if seg not in ("(not set)", "unknown") else "Unknown",
+                             "date_from": str(ms), "date_to": str(month_end(ms)), "source": "api", "users": mv[0], "sessions": mv[1], "conversions": mv[2]})
+        return merge_segments(rows)
 
 
 class SearchConsole(Connector):

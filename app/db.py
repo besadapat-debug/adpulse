@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT UNIQUE NOT NULL,
   name TEXT,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'member',          -- owner | member | viewer
+  role TEXT NOT NULL DEFAULT 'member',          -- owner | member | viewer | client (sees only users.client_id)
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -273,6 +273,49 @@ CREATE TABLE IF NOT EXISTS prospects (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Who saw/clicked the ads and who visited the site: group totals only (age, gender, region, city), never individuals.
+-- One row per segment per period (usually a calendar month). Filled by connectors or uploaded reports.
+CREATE TABLE IF NOT EXISTS demographics (
+  client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  platform TEXT NOT NULL,                -- meta_ads | google_ads | ga4
+  dimension TEXT NOT NULL,               -- age | gender | age_gender | region | city
+  segment TEXT NOT NULL,                 -- e.g. 25-34, female, Victoria, Bentleigh East
+  date_from TEXT NOT NULL,
+  date_to TEXT NOT NULL,
+  impressions INTEGER DEFAULT 0,
+  reach INTEGER DEFAULT 0,
+  clicks INTEGER DEFAULT 0,
+  spend REAL DEFAULT 0,
+  conversions REAL DEFAULT 0,
+  users REAL DEFAULT 0,
+  sessions REAL DEFAULT 0,
+  source TEXT DEFAULT 'api',             -- api | upload | demo
+  PRIMARY KEY (client_id, platform, dimension, segment, date_from, date_to)
+);
+
+-- Monthly snapshot of nearby competitors' Google rating and review count.
+CREATE TABLE IF NOT EXISTS local_competitors (
+  client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  month TEXT NOT NULL,                   -- YYYY-MM
+  name TEXT NOT NULL,
+  rating REAL,
+  reviews INTEGER,
+  PRIMARY KEY (client_id, month, name)
+);
+
+CREATE TABLE IF NOT EXISTS imports (
+  id INTEGER PRIMARY KEY,
+  client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  filename TEXT DEFAULT '',
+  kind TEXT DEFAULT '',
+  platform TEXT DEFAULT '',
+  rows INTEGER DEFAULT 0,
+  period_from TEXT DEFAULT '',
+  period_to TEXT DEFAULT '',
+  created_by TEXT DEFAULT '',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 INSERT OR IGNORE INTO agency (id, name) VALUES (1, 'Your Agency');
 """
 
@@ -287,6 +330,8 @@ MIGRATIONS = [
     "ALTER TABLE agency ADD COLUMN phone TEXT DEFAULT ''",
     "ALTER TABLE agency ADD COLUMN email TEXT DEFAULT ''",
     "ALTER TABLE agency ADD COLUMN website TEXT DEFAULT ''",
+    "ALTER TABLE clients ADD COLUMN area TEXT DEFAULT ''",
+    "ALTER TABLE users ADD COLUMN client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE",
 ]
 
 _lock = threading.RLock()

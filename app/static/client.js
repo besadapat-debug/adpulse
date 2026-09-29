@@ -2,12 +2,12 @@
 currency = CLIENT.currency || 'AUD';
 let days = 30;
 const view = $('#view');
-const TABS = ['performance', 'engagement', 'organic', 'seo', 'email', 'attribution', 'people', 'companies', 'audiences', 'budget', 'alerts', 'connections', 'settings'];
+const TABS = ['monthly', 'local', 'performance', 'engagement', 'audience', 'organic', 'seo', 'email', 'attribution', 'people', 'companies', 'audiences', 'budget', 'alerts', 'upload', 'connections', 'settings'];
 let base = `/api/clients/${CLIENT.id}`;
 function setClient(c) { Object.keys(CLIENT).forEach(k => delete CLIENT[k]); Object.assign(CLIENT, c); base = `/api/clients/${c.id}`; currency = c.currency || 'AUD'; }
 
 function gotoTab(t) { const h = location.hash.slice(1); location.hash = /^c\d+-/.test(h) ? h.replace(/-[a-z]+$/, '-' + t) : t; return false; }
-function tab() { const h = location.hash.slice(1).split(/[/-]/).pop(); return TABS.includes(h) ? h : 'performance'; }
+function tab() { const h = location.hash.slice(1).split(/[/-]/).pop(); return TABS.includes(h) ? h : 'monthly'; }
 async function route() {
   const t = tab();
   $$('#tabs a').forEach(a => { const h = a.getAttribute('href'); a.classList.toggle('on', h === '#' + t || h.endsWith('/' + t) || h.endsWith('-' + t)); });
@@ -450,7 +450,16 @@ R.settings = async () => {
       <div class="row"><label class="f" style="flex:1">Monthly budget<input name="monthly_budget" type="number" value="${c.monthly_budget}"></label><label class="f" style="flex:1">Target ROAS<input name="target_roas" type="number" step="0.1" value="${c.target_roas}"></label><label class="f" style="flex:1">Target CPA<input name="target_cpa" type="number" value="${c.target_cpa}"></label></div>
       <div class="row"><label class="f" style="flex:1">Currency<select name="currency">${['AUD', 'NZD', 'USD', 'EUR', 'GBP'].map(x => `<option ${x === c.currency ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
         <label class="f" style="flex:1">Privacy region<select name="region">${['AU', 'NZ', 'EU', 'UK', 'US-CA', 'US'].map(x => `<option ${x === c.region ? 'selected' : ''}>${x}</option>`).join('')}</select></label></div>
+      <label class="f">Suburb / area (for competitor & review tracking)<input name="area" value="${fmt.esc(c.area || '')}" placeholder="e.g. East Bentleigh VIC"></label>
       <div><button class="btn primary">Save</button></div></div></form>
+    <div class="card"><h2>Client login</h2>
+      <p class="small muted">Give the business owner their own login. They see only their business: the monthly report, Google &amp; reviews, ads, audience and website results. They can't change anything or see other clients.</p>
+      <div id="logins"><div class="small muted">Loading…</div></div>
+      <form class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap;align-items:flex-end" onsubmit="return addLogin(event)">
+        <label class="f" style="flex:1;min-width:160px">Their email<input name="email" type="email" required></label>
+        <label class="f" style="flex:1;min-width:120px">Name<input name="name"></label>
+        <label class="f" style="flex:1;min-width:140px">Password (8+ characters)<input name="password" type="text" minlength="8" required></label>
+        <button class="btn primary">Create login</button></form></div>
     <div class="card"><h2>Privacy &amp; compliance · ${fmt.esc(p.region)}</h2>
       <div class="small"><b>${fmt.esc(p.policy.law)}</b><br>${fmt.esc(p.policy.basis)}<br><span class="muted">${fmt.esc(p.policy.notes)}</span></div>
       <p class="small muted">Behavioural events are kept ${p.retention_days} days. Erased contacts are excluded immediately, removed from platform audiences on next sync, and their details wiped after 30 days.</p>
@@ -460,9 +469,212 @@ R.settings = async () => {
   $('#cset').onsubmit = async e => { e.preventDefault(); const b = Object.fromEntries(new FormData(e.target));
     ['monthly_budget', 'target_roas', 'target_cpa'].forEach(k => b[k] = +b[k] || 0);
     Object.assign(CLIENT, await api(base, { method: 'PATCH', json: b })); currency = CLIENT.currency; toast('Saved'); };
+  loadLogins();
 };
 async function dsAccess() { const r = await api(`${base}/privacy/access?email=${encodeURIComponent($('#dsEmail').value)}`); $('#dsOut').hidden = false; $('#dsOut').textContent = JSON.stringify(r, null, 1); }
 async function dsErase() { if (!confirm('Erase this person\'s data? This cannot be undone.')) return; const r = await api(`${base}/privacy/erase`, { json: { email: $('#dsEmail').value } }); toast(r.found ? 'Erased' : 'Not found'); }
+
+
+/* ---------------- monthly report (plain English) ---------------- */
+let repMonth = '';
+R.monthly = async () => {
+  const d = await api(`${base}/monthly${repMonth ? '?month=' + repMonth : ''}`);
+  setPeriod(null); $('#periodLabel').textContent = `Monthly report · ${d.month_label}`;
+  view.innerHTML = `
+    <div class="row no-print" style="justify-content:space-between;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+      <label class="f">Month<select id="repMonth">${d.months.map(m => `<option value="${m}" ${m === d.month ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
+      <div class="row" style="gap:8px"><a class="btn" href="/clients/${CLIENT.id}/monthly?month=${d.month}" target="_blank" rel="noopener">🖨 Printable page</a>
+        ${IS_CLIENT ? '' : '<button class="btn primary" id="repShare">Copy link for the client</button>'}</div></div>
+    ${d.has_data ? `
+    <div class="card"><div class="headline-box">${fmt.esc(d.headline)}</div>
+      ${d.kpis.length ? `<div class="kpis" style="margin-top:12px">${d.kpis.map(k => `<div class="kpi"><div class="l">${fmt.esc(k.label)}</div><div class="v">${fmt.esc(k.value)}</div>
+        <div class="d">${k.change == null ? '<span class="muted">this month</span>' : delta(k.change) + ' <span class="muted">vs last month</span>'}</div></div>`).join('')}</div>` : ''}
+      <div class="grid g2" style="margin-top:6px">${d.sections.map(sec => `<div><h3>${fmt.esc(sec.title)}</h3><ul class="plain">${sec.lines.map(l => `<li>${fmt.esc(l)}</li>`).join('')}</ul></div>`).join('')}</div>
+      <h3 style="margin-top:14px">What we'll do next month</h3>
+      <ol class="plain next-steps">${d.next_steps.map(n => `<li>${fmt.esc(n)}</li>`).join('')}</ol></div>`
+    : `<div class="card"><div class="empty">No results recorded for ${fmt.esc(d.month_label)} yet.${IS_CLIENT ? '' : `<br><br>To fill it in: add this month's figures in <a href="#local" onclick="return gotoTab('local')">Google &amp; reviews</a>, and/or upload an ad report in <a href="#upload" onclick="return gotoTab('upload')">Upload data</a>.`}</div></div>`}`;
+  $('#repMonth').onchange = e => { repMonth = e.target.value; route(); };
+  const sh = $('#repShare');
+  if (sh) sh.onclick = async () => { const r = await api(`${base}/monthly-link?month=${d.month}`, { method: 'POST' });
+    try { await navigator.clipboard.writeText(r.url); toast('Link copied (works for 120 days). Paste it into an email or text to the owner.', 6000); } catch { prompt('Report link:', r.url); } };
+};
+
+/* ---------------- Google Maps & reviews ---------------- */
+const GBP_HELP = 'Where to find these: open business.google.com (or search the business name on Google while signed in) → Performance → choose the month.';
+R.local = async () => {
+  const d = await api(`${base}/local`);
+  setPeriod(null); $('#periodLabel').textContent = 'Google Maps listing & reviews';
+  const L = d.latest || {}, P = d.previous || {};
+  const labels = Object.fromEntries(d.activity);
+  const editMonth = d.suggest_month;
+  const cur = d.series.find(x => x.month === editMonth) || {};
+  const comp = d.competitors;
+  view.innerHTML = `
+    ${d.series.length ? `<div class="kpis">${['calls', 'direction_requests', 'website_clicks', 'profile_views'].filter(k => L[k] != null).map(k =>
+      kpi(labels[k], fmt.num(L[k]), P[k] ? (L[k] - P[k]) / P[k] : undefined, true, L.month)).join('')}
+      ${L.reviews_total != null ? kpi('Google reviews', fmt.num(L.reviews_total) + (L.rating ? ` <span class="small">★${L.rating}</span>` : ''), undefined, true, L.new_reviews != null ? `+${L.new_reviews} this month` : L.month) : ''}
+      ${d.rank ? kpi('Rank by reviews', `#${d.rank} <span class="small">of ${d.of}</span>`, undefined, true, 'vs nearby competitors') : ''}</div>` : ''}
+    <div class="grid g2">
+      <div class="card"><h2>Calls &amp; directions from Google, by month</h2>
+        ${d.series.length ? `<div id="lgl"></div><div class="chart-box"><canvas id="loc1"></canvas></div>` : '<div class="empty">No months recorded yet.</div>'}</div>
+      <div class="card"><h2>Reviews vs nearby competitors ${comp.month ? `<span class="small muted">· ${comp.month}</span>` : ''}</h2>
+        ${d.ranking.length ? `<div class="tw"><table><thead><tr><th>Business</th><th class="r">Rating</th><th class="r">Reviews</th><th class="r">New</th></tr></thead><tbody>
+          ${d.ranking.map((r, i) => `<tr class="${r.is_self ? 'sel' : ''}"><td>${i + 1}. ${r.is_self ? `<b>${fmt.esc(CLIENT.name)}</b> <span class="badge accent">you</span>` : fmt.esc(r.name)}</td>
+            <td class="r">${r.rating ? '★' + r.rating : '–'}</td><td class="r">${fmt.num(r.reviews)}</td><td class="r">${r.new_reviews != null ? '+' + r.new_reviews : '–'}</td></tr>`).join('')}</tbody></table></div>
+          ${d.top_competitor && L.reviews_total != null && d.top_competitor.reviews > L.reviews_total ? `<div class="callout small" style="margin-top:8px">${fmt.esc(d.top_competitor.name)} has ${fmt.num(d.top_competitor.reviews - L.reviews_total)} more reviews. At 10 new reviews a month you'd catch up in about ${Math.ceil((d.top_competitor.reviews - L.reviews_total) / 10)} months.</div>` : ''}`
+        : `<div class="empty">No competitors added yet.${IS_CLIENT ? '' : ' Add them below.'}</div>`}</div>
+    </div>
+    ${IS_CLIENT ? '' : `
+    <div class="card" style="margin-top:14px"><h2>Add a month's figures</h2>
+      <p class="small muted">${GBP_HELP} Takes about 2 minutes a month. Leave a box empty if Google doesn't show it.</p>
+      <form id="gbpForm" class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap">
+        <label class="f">Month<input name="month" type="month" value="${editMonth}" style="width:150px"></label>
+        ${d.activity.map(([k, l]) => `<label class="f">${l}<input name="${k}" type="number" min="0" value="${cur[k] ?? ''}" style="width:120px"></label>`).join('')}
+        <label class="f">Total reviews<input name="reviews_total" type="number" min="0" value="${cur.reviews_total ?? ''}" style="width:110px"></label>
+        <label class="f">Rating ★<input name="rating" type="number" min="0" max="5" step="0.1" value="${cur.rating ?? ''}" style="width:90px"></label>
+        <button class="btn primary">Save month</button></form></div>
+    <div class="card" style="margin-top:14px"><div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap"><h2>Competitors to track</h2>
+      <div class="row" style="gap:8px"><label class="f">Suburb<input id="area" value="${fmt.esc(d.area)}" placeholder="e.g. East Bentleigh VIC" style="width:190px"></label>
+        ${d.places_enabled ? '<button class="btn" id="gRefresh" type="button">↻ Update reviews from Google</button>' : ''}</div></div>
+      <p class="small muted">Add the 3–6 nearest similar businesses once. Each month, update their review counts (or click “Update reviews from Google” if a Places key is set) so you can show the owner the gap closing.</p>
+      <div id="compRows">${(comp.list.length ? comp.list : [{}, {}, {}]).map(c => compRow(c)).join('')}</div>
+      <div class="row" style="gap:8px;margin-top:8px"><button class="btn sm" type="button" id="compAddRow">＋ Add row</button><button class="btn primary" type="button" id="compSave">Save competitors for ${editMonth}</button></div></div>`}
+    ${d.series.length ? `<div class="card" style="margin-top:14px"><h2>All months</h2><div class="tw"><table><thead><tr><th>Month</th>${d.activity.map(([, l]) => `<th class="r">${l}</th>`).join('')}<th class="r">Reviews</th><th class="r">New</th><th class="r">Rating</th></tr></thead><tbody>
+      ${d.series.slice().reverse().map(r => `<tr><td>${r.month}${r.partial ? ' <span class="small muted">(so far)</span>' : ''}</td>${d.activity.map(([k]) => `<td class="r">${fmt.num(r[k])}</td>`).join('')}<td class="r">${fmt.num(r.reviews_total)}</td><td class="r">${r.new_reviews != null ? '+' + r.new_reviews : '–'}</td><td class="r">${r.rating ?? '–'}</td></tr>`).join('')}
+    </tbody></table></div></div>` : ''}`;
+  if (d.series.length) {
+    const s = d.series;
+    $('#lgl').innerHTML = legendHTML([{ label: 'Calls', color: cssVar('--s1') }, { label: 'Direction requests', color: cssVar('--s2') }, { label: 'Website clicks', color: cssVar('--s6') }]);
+    drawChart('loc1', { type: 'bar', data: { labels: s.map(r => r.month), datasets: [
+      { label: 'Calls', data: s.map(r => r.calls || 0), backgroundColor: cssVar('--s1'), borderRadius: 3 },
+      { label: 'Direction requests', data: s.map(r => r.direction_requests || 0), backgroundColor: cssVar('--s2'), borderRadius: 3 },
+      { label: 'Website clicks', data: s.map(r => r.website_clicks || 0), backgroundColor: cssVar('--s6'), borderRadius: 3 }] },
+      options: { scales: { x: { grid: { display: false } }, y: axis(fmt.compact) } } });
+  }
+  if (IS_CLIENT) return;
+  $('#gbpForm').onsubmit = async e => {
+    e.preventDefault(); const fd = Object.fromEntries(new FormData(e.target)); const month = fd.month; delete fd.month;
+    try { await api(`${base}/local/${month}`, { method: 'PUT', json: { values: fd } }); toast('Month saved'); route(); } catch (err) { toast(err.message, 6000); }
+  };
+  $('#compAddRow').onclick = () => $('#compRows').insertAdjacentHTML('beforeend', compRow({}));
+  const saveArea = async () => { const a = $('#area').value.trim(); if (a !== (CLIENT.area || '')) Object.assign(CLIENT, await api(base, { method: 'PATCH', json: { area: a } })); };
+  $('#area').onchange = saveArea;
+  $('#compSave').onclick = async () => {
+    const list = $$('#compRows .comprow').map(r => ({ name: $('[name=cn]', r).value.trim(), rating: $('[name=cr]', r).value, reviews: $('[name=cv]', r).value })).filter(x => x.name);
+    try { await saveArea(); await api(`${base}/local/${editMonth}`, { method: 'PUT', json: { competitors: list } }); toast('Competitors saved'); route(); } catch (err) { toast(err.message, 6000); }
+  };
+  const rf = $('#gRefresh');
+  if (rf) rf.onclick = async () => { rf.disabled = true; rf.textContent = 'Checking Google…';
+    try { await saveArea(); await api(`${base}/local/${editMonth}/refresh`, { method: 'POST' }); toast('Reviews updated'); route(); } catch (err) { toast(err.message, 7000); rf.disabled = false; rf.textContent = '↻ Update reviews from Google'; } };
+};
+function compRow(c) {
+  return `<div class="row comprow" style="gap:8px;margin-top:6px"><input name="cn" placeholder="Competitor name" value="${fmt.esc(c.name || '')}" style="flex:1;min-width:180px">
+    <input name="cr" type="number" step="0.1" min="0" max="5" placeholder="★ rating" value="${c.rating ?? ''}" style="width:100px">
+    <input name="cv" type="number" min="0" placeholder="reviews" value="${c.reviews ?? ''}" style="width:110px">
+    <button class="btn sm ghost" type="button" onclick="this.parentElement.remove()">✕</button></div>`;
+}
+
+/* ---------------- audience: age, gender, location ---------------- */
+let audMonths = 3;
+R.audience = async () => {
+  const d = await api(`${base}/audience?months=${audMonths}`);
+  setPeriod(null); $('#periodLabel').textContent = `Who sees and responds · since ${fmt.date(d.from)}`;
+  const A = d.ads, W = d.web;
+  const segTable = (x, withCost = true) => `<div class="tw"><table><thead><tr><th>${fmt.esc(x.label)}</th>${withCost ? '<th class="r">Spend</th><th class="r">Share of spend</th><th class="r">Clicks</th><th class="r">CTR</th><th class="r">Results</th><th class="r">Share of results</th><th class="r">Cost per result</th>' : '<th class="r">Visitors</th><th class="r">Share</th><th class="r">Sessions</th><th class="r">Actions</th>'}</tr></thead><tbody>
+    ${x.segments.map(s => withCost ? `<tr><td>${fmt.esc(s.segment)}</td><td class="r">${fmt.money(s.spend)}</td>
+      <td class="r"><div class="bar-track" style="width:60px;display:inline-block"><div class="bar-fill" style="width:${((s.spend_share || 0) * 100).toFixed(0)}%;background:${cssVar('--s1')}"></div></div> ${fmt.pct(s.spend_share, 0)}</td>
+      <td class="r">${fmt.num(s.clicks)}</td><td class="r">${fmt.pct(s.ctr, 2)}</td><td class="r">${fmt.num(s.conversions, 1)}</td>
+      <td class="r"><div class="bar-track" style="width:60px;display:inline-block"><div class="bar-fill" style="width:${((s.conv_share || 0) * 100).toFixed(0)}%;background:${cssVar('--s2')}"></div></div> ${fmt.pct(s.conv_share, 0)}</td>
+      <td class="r">${s.cpa != null && x.totals.cpa && s.cpa < x.totals.cpa * 0.8 ? `<span class="badge good">${fmt.money2(s.cpa)}</span>` : s.cpa != null && x.totals.cpa && s.cpa > x.totals.cpa * 1.3 ? `<span class="badge warn">${fmt.money2(s.cpa)}</span>` : fmt.money2(s.cpa)}</td></tr>`
+      : `<tr><td>${fmt.esc(s.segment)}</td><td class="r">${fmt.num(s.users)}</td><td class="r">${fmt.pct(s.share, 0)}</td><td class="r">${fmt.num(s.sessions)}</td><td class="r">${fmt.num(s.conversions)}</td></tr>`).join('')}</tbody></table></div>`;
+  view.innerHTML = `
+    <div class="row no-print" style="justify-content:space-between;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+      <div class="seg" id="audRange">${[[1, 'This month'], [3, '3 months'], [12, '12 months']].map(([m, l]) => `<button data-m="${m}" class="${m === audMonths ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <div class="small muted">${d.platforms.map(p => fmt.esc(p.label)).join(' · ') || 'No sources yet'} · group totals only, never individuals</div></div>
+    ${d.insights.length ? `<div class="card"><h2>What this tells you</h2>${d.insights.map(i => `<div class="insight ${i.kind}"><b style="background:var(--icb);color:var(--ic)">${i.kind === 'good' ? '✓' : i.kind === 'bad' ? '!' : 'i'}</b><span>${fmt.esc(i.text)}</span></div>`).join('')}</div>` : ''}
+    ${A.age || A.gender ? `<div class="grid g2" style="margin-top:14px">
+      ${A.age ? `<div class="card"><h2>Ads by age: share of spend vs share of results</h2><div id="lga"></div><div class="chart-box"><canvas id="au1"></canvas></div></div>` : ''}
+      ${A.gender ? `<div class="card"><h2>Ads by gender</h2><div id="lgg"></div><div class="chart-box"><canvas id="au2"></canvas></div></div>` : ''}</div>` : ''}
+    ${['age_gender', 'age', 'gender', 'region', 'city'].filter(k => A[k]).map(k => `<div class="card" style="margin-top:14px"><h2>Ads · ${fmt.esc(A[k].label)}</h2>${segTable(A[k])}</div>`).join('')}
+    ${Object.keys(W).length ? `<h2 style="margin:18px 0 8px">Website visitors (Google Analytics)</h2><div class="grid g2">${['age', 'gender', 'city', 'region'].filter(k => W[k]).map(k => `<div class="card"><h2>${fmt.esc(W[k].label)}</h2>${segTable(W[k], false)}</div>`).join('')}</div>` : ''}
+    ${!Object.keys(A).length && !Object.keys(W).length ? `<div class="card" style="margin-top:14px"><div class="empty">No age, gender or location data yet.${IS_CLIENT ? '' : ` Export a report broken down by Age &amp; Gender (or Region) from Meta Ads Manager, Google Ads or Google Analytics and add it in <a href="#upload" onclick="return gotoTab('upload')">Upload data</a>.`}</div></div>` : ''}`;
+  $$('#audRange button').forEach(b => b.onclick = () => { audMonths = +b.dataset.m; route(); });
+  const shareChart = (id, lg, x) => {
+    $('#' + lg).innerHTML = legendHTML([{ label: 'Share of spend', color: cssVar('--s1') }, { label: 'Share of results', color: cssVar('--s2') }]);
+    drawChart(id, { type: 'bar', data: { labels: x.segments.map(s => s.segment), datasets: [
+      { label: 'Share of spend', data: x.segments.map(s => (s.spend_share || 0) * 100), backgroundColor: cssVar('--s1'), borderRadius: 3 },
+      { label: 'Share of results', data: x.segments.map(s => (s.conv_share || 0) * 100), backgroundColor: cssVar('--s2'), borderRadius: 3 }] },
+      options: { scales: { x: { grid: { display: false } }, y: axis(v => v + '%') }, plugins: { tooltip: { ...tooltipStyle(), callbacks: { label: t => ` ${t.dataset.label}: ${t.raw.toFixed(0)}%` } } } } });
+  };
+  if (A.age) shareChart('au1', 'lga', A.age);
+  if (A.gender) shareChart('au2', 'lgg', A.gender);
+};
+
+/* ---------------- upload data (CSV exports) ---------------- */
+const UPLOAD_HELP = [
+  ['Meta Ads Manager (Facebook & Instagram)', ['Open Ads Manager → Campaigns, pick the date range (e.g. last month).', 'For results by campaign: click <b>Reports → Export table data → .csv</b>.',
+    'For age & gender: click <b>Breakdown → By delivery → Age</b> and <b>Gender</b>, then export again. For location: Breakdown → <b>Region</b>.']],
+  ['Google Ads', ['Open Google Ads → Campaigns, set the date range.', 'Click the <b>download icon → .csv</b>. Add “Day” under Segment first if you want daily charts.',
+    'For age & gender: go to <b>Audiences, keywords and content → Demographics</b>, then download .csv. For location: <b>Locations → Matched locations</b>.']],
+  ['Google Analytics (website visitors)', ['Open Reports → <b>User attributes → Demographic details</b>, pick Age, Gender or Town/City.', 'Click <b>Share this report → Download file → CSV</b>.',
+    'For visitors per day: Reports → Acquisition → Traffic acquisition, then download CSV.']],
+];
+R.upload = async () => {
+  const h = await api(`${base}/imports`);
+  setPeriod(null); $('#periodLabel').textContent = 'Upload reports: works without any platform approvals';
+  const today = new Date(), lm = new Date(today.getFullYear(), today.getMonth() - 1, 1), lmEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+  const iso = x => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+  view.innerHTML = `
+    <div class="grid g2">
+      <form class="card" id="upForm"><h2>Upload a report</h2>
+        <p class="small muted">Export a CSV from Meta Ads Manager, Google Ads or Google Analytics and drop it here. AdPulse recognises the columns and fills in the right tab. Uploading the same period again replaces it.</p>
+        <label class="dropzone" id="drop"><input type="file" name="file" accept=".csv,.tsv,.txt" required hidden><span id="dropText">📄 Click to choose a CSV file, or drag it here</span></label>
+        <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap;align-items:flex-end">
+          <label class="f">From<select name="platform"><option value="auto">Work it out for me</option>${Object.entries(h.platforms).map(([k, l]) => `<option value="${k}">${fmt.esc(l)}</option>`).join('')}</select></label>
+          <label class="f">Report covers<input type="date" name="period_from" value="${iso(lm)}"></label>
+          <label class="f">to<input type="date" name="period_to" value="${iso(lmEnd)}"></label></div>
+        <p class="small muted" style="margin:6px 0 10px">The dates are only used if the file doesn't include them.</p>
+        <button class="btn primary">Upload</button>
+        <div id="upResult"></div></form>
+      <div class="card"><h2>How to export the report</h2>${UPLOAD_HELP.map(([t, steps]) => `<h3>${t}</h3><ol class="plain small">${steps.map(x => `<li>${x}</li>`).join('')}</ol>`).join('')}</div>
+    </div>
+    <div class="card" style="margin-top:14px"><h2>Uploaded so far</h2><div class="tw"><table><thead><tr><th>When</th><th>File</th><th>From</th><th>Type</th><th>Period</th><th class="r">Rows</th></tr></thead><tbody>
+      ${h.history.map(x => `<tr><td class="small muted">${fmt.esc(x.created_at)}</td><td>${fmt.esc(x.filename)}</td><td>${fmt.esc(h.platforms[x.platform] || x.platform)}</td><td>${{ ads: 'Ad results', demographics: 'Age / gender / location', traffic: 'Website visitors' }[x.kind] || x.kind}</td><td class="small">${x.period_from} → ${x.period_to}</td><td class="r">${x.rows}</td></tr>`).join('') || '<tr><td colspan=6 class="empty">Nothing uploaded yet</td></tr>'}
+    </tbody></table></div></div>`;
+  const inp = $('#upForm [name=file]'), drop = $('#drop');
+  inp.onchange = () => { $('#dropText').textContent = inp.files[0] ? '📄 ' + inp.files[0].name : '📄 Click to choose a CSV file, or drag it here'; };
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+  drop.ondragleave = () => drop.classList.remove('over');
+  drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) { inp.files = e.dataTransfer.files; inp.onchange(); } };
+  $('#upForm').onsubmit = async e => {
+    e.preventDefault();
+    if (!inp.files[0]) return toast('Choose a file first');
+    const btn = $('#upForm button.primary'); btn.disabled = true; btn.textContent = 'Uploading…';
+    try {
+      const r = await api(`${base}/import`, { method: 'POST', body: new FormData(e.target) });
+      const tabFor = { ads: 'performance', demographics: 'audience', traffic: 'organic' }[r.kind];
+      $('#upResult').innerHTML = `<div class="callout small" style="margin-top:10px">✓ Added ${r.rows} rows from <b>${fmt.esc(r.platform_label)}</b> (${r.period[0]} → ${r.period[1]}). They show in <a href="#${tabFor}" onclick="return gotoTab('${tabFor}')">${fmt.esc(r.shows_in)}</a>.
+        <div class="muted" style="margin-top:4px">Columns used: ${Object.entries(r.columns).map(([k, v]) => `${k} ← “${fmt.esc(v)}”`).join(', ')}</div></div>`;
+      toast('Uploaded'); setTimeout(() => R.upload().catch(() => {}), 2500);
+    } catch (err) { $('#upResult').innerHTML = `<div class="callout warn small" style="margin-top:10px">${fmt.esc(err.message)}</div>`; }
+    btn.disabled = false; btn.textContent = 'Upload';
+  };
+};
+
+/* ---------------- client logins (in Client settings) ---------------- */
+async function loadLogins() {
+  const el = $('#logins'); if (!el) return;
+  try {
+    const rows = await api(`${base}/logins`);
+    el.innerHTML = rows.length ? `<table><tbody>${rows.map(u => `<tr><td>${fmt.esc(u.email)}</td><td class="small muted">${fmt.esc(u.name || '')}</td><td class="r"><button class="btn sm ghost" onclick="delLogin(${u.id})">Remove</button></td></tr>`).join('')}</tbody></table>` : '<div class="small muted">No client logins yet.</div>';
+  } catch (e) { el.innerHTML = `<div class="small muted">${fmt.esc(e.message)}</div>`; }
+}
+async function delLogin(id) { if (!confirm('Remove this login? They will no longer be able to sign in.')) return; await api(`${base}/logins/${id}`, { method: 'DELETE' }); loadLogins(); }
+async function addLogin(e) {
+  e.preventDefault(); const b = Object.fromEntries(new FormData(e.target));
+  try { await api(`${base}/logins`, { json: b }); toast('Login created. Send them the website address, their email and password.', 6000); e.target.reset(); loadLogins(); } catch (err) { toast(err.message, 6000); }
+  return false;
+}
 
 /* ---------------- top bar actions ---------------- */
 async function syncNow(btn) {
@@ -477,6 +689,6 @@ async function shareReport() {
 }
 
 if (!window.__DEMO_SHELL__) {
-  api(`${base}/alerts`).then(a => updateAlertCount(a.length)).catch(() => {});
+  if (!IS_CLIENT) api(`${base}/alerts`).then(a => updateAlertCount(a.length)).catch(() => {});
   route();
 }

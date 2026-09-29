@@ -7,14 +7,15 @@
     <div><h1>{{ client.name }}</h1><div class="sub" id="periodLabel"></div></div></div>
   <div class="row no-print">
     <div class="seg" id="range"><button data-d="7">7d</button><button data-d="30" class="on">30d</button><button data-d="90">90d</button></div>
-    <button class="btn" onclick="syncNow(this)">↻ Sync now</button>
-    <button class="btn primary" onclick="shareReport()">Share report</button>
+    {% if not is_client %}<button class="btn" onclick="syncNow(this)">↻ Sync now</button>
+    <button class="btn primary" onclick="shareReport()">Share report</button>{% endif %}
   </div>
 </div>
 <nav class="tabs no-print" id="tabs">
-  <a href="#performance">Paid performance</a><a href="#engagement">Ad engagement</a><a href="#organic">Web &amp; social</a><a href="#seo">SEO</a><a href="#email">Email</a>
-  <a href="#attribution">Attribution</a><a href="#people">People</a><a href="#companies">Companies</a><a href="#audiences">Audiences</a><a href="#budget">Budget</a>
-  <a href="#alerts">Alerts <span class="count" id="alertCount" hidden></span></a><a href="#connections">Connections</a><a href="#settings">Client settings</a>
+  <a href="#monthly">Monthly report</a><a href="#local">Google &amp; reviews</a><a href="#performance">Paid performance</a><a href="#engagement">Ad engagement</a>
+  <a href="#audience">Audience</a><a href="#organic">Web &amp; social</a><a href="#seo">SEO</a><a href="#email">Email</a>
+  {% if not is_client %}<a href="#attribution">Attribution</a><a href="#people">People</a><a href="#companies">Companies</a><a href="#audiences">Audiences</a><a href="#budget">Budget</a>
+  <a href="#alerts">Alerts <span class="count" id="alertCount" hidden></span></a><a href="#upload">Upload data</a><a href="#connections">Connections</a><a href="#settings">Client settings</a>{% endif %}
 </nav>
 <div id="view"></div>
 
@@ -40,6 +41,6 @@
 </form></dialog>
 {% endblock %}
 {% block scripts %}
-<script>const CLIENT = {{ client | tojson }};</script>
-<script src="/static/client.js"></script>
+<script>const CLIENT = {{ client | tojson }}; const IS_CLIENT = {{ 'true' if is_client else 'false' }};</script>
+<script src="/static/client.js?v={{ v }}"></script>
 {% endblock %}

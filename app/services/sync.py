@@ -32,6 +32,11 @@ UPSERTS = {
                            "video_watch_seconds=excluded.video_watch_seconds, video_completions=excluded.video_completions, engagements=excluded.engagements, "
                            "shares=excluded.shares, saves=excluded.saves, comments=excluded.comments",
                            {"reach": 0, "video_views": 0, "video_watch_seconds": 0, "video_completions": 0, "engagements": 0, "shares": 0, "saves": 0, "comments": 0}),
+    "demographics": (("INSERT INTO demographics (client_id, platform, dimension, segment, date_from, date_to, impressions, reach, clicks, spend, conversions, users, sessions, source) "
+                     "VALUES (:client_id,:platform,:dimension,:segment,:date_from,:date_to,:impressions,:reach,:clicks,:spend,:conversions,:users,:sessions,:source) "
+                     "ON CONFLICT(client_id, platform, dimension, segment, date_from, date_to) DO UPDATE SET impressions=excluded.impressions, reach=excluded.reach, "
+                     "clicks=excluded.clicks, spend=excluded.spend, conversions=excluded.conversions, users=excluded.users, sessions=excluded.sessions, source=excluded.source"),
+                     {"impressions": 0, "reach": 0, "clicks": 0, "spend": 0, "conversions": 0, "users": 0, "sessions": 0, "source": "api"}),
 }
 
 

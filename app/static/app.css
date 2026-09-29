@@ -221,3 +221,15 @@ tr.sel td { background: var(--accent-soft); }
 .adres b { font-size: 18px; font-variant-numeric: tabular-nums; }
 .adres b.neg { color: var(--bad); } .adres b.pos { color: var(--good); }
 .adres em { font-style: normal; font-size: 11.5px; color: var(--text-2); }
+/* monthly report, audience insights, uploads */
+.headline-box { font-size: 17px; font-weight: 600; background: var(--good-bg); color: var(--text); border-radius: 10px; padding: 12px 14px; }
+ul.plain, ol.plain { margin: 4px 0 0; padding-left: 20px; } ul.plain li, ol.plain li { margin: 4px 0; }
+.next-steps li::marker { color: var(--accent); font-weight: 700; }
+.insight { display: grid; grid-template-columns: 24px 1fr; gap: 8px; align-items: start; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13.5px; }
+.insight:last-child { border-bottom: 0; }
+.insight > b { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; }
+.insight.good { --ic: var(--good); --icb: var(--good-bg); }
+.insight.bad { --ic: var(--bad); --icb: var(--bad-bg); }
+.insight.info { --ic: var(--accent); --icb: var(--accent-soft); }
+.dropzone { display: block; border: 2px dashed var(--border-strong, var(--border)); border-radius: 12px; padding: 22px; text-align: center; cursor: pointer; color: var(--text-2); }
+.dropzone.over, .dropzone:hover { border-color: var(--accent); color: var(--text); }
