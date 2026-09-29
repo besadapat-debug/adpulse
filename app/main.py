@@ -249,7 +249,7 @@ def get_client(cid: int, user=Depends(require_user)):
     return _client(cid)
 
 
-EDITABLE = {"name", "industry", "currency", "brand_color", "logo_url", "report_title", "report_footer", "monthly_budget", "target_cpa", "target_roas", "region", "area"}
+EDITABLE = {"name", "industry", "currency", "brand_color", "logo_url", "report_title", "report_footer", "monthly_budget", "target_cpa", "target_roas", "region", "area", "search_term"}
 
 
 @app.patch("/api/clients/{cid}")
@@ -601,6 +601,17 @@ async def put_local(cid: int, month: str, request: Request, user=Depends(require
             local.save_month(cid, month, body["values"])
         if isinstance(body.get("competitors"), list):
             local.save_competitors(cid, month, body["competitors"])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return local.summary(cid)
+
+
+@app.post("/api/clients/{cid}/local/{month}/find")
+def find_local_competitors(cid: int, month: str, user=Depends(require_editor)):
+    from .services import local
+    _client(cid)
+    try:
+        local.find_competitors(cid, month)
     except ValueError as e:
         raise HTTPException(400, str(e))
     return local.summary(cid)

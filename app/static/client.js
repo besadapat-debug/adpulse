@@ -534,9 +534,14 @@ R.local = async () => {
         <label class="f">Rating ★<input name="rating" type="number" min="0" max="5" step="0.1" value="${cur.rating ?? ''}" style="width:90px"></label>
         <button class="btn primary">Save month</button></form></div>
     <div class="card" style="margin-top:14px"><div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap"><h2>Competitors to track</h2>
-      <div class="row" style="gap:8px"><label class="f">Suburb<input id="area" value="${fmt.esc(d.area)}" placeholder="e.g. East Bentleigh VIC" style="width:190px"></label>
-        ${d.places_enabled ? '<button class="btn" id="gRefresh" type="button">↻ Update reviews from Google</button>' : ''}</div></div>
-      <p class="small muted">Add the 3–6 nearest similar businesses once. Each month, update their review counts (or click “Update reviews from Google” if a Places key is set) so you can show the owner the gap closing.</p>
+      <div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap">
+        <label class="f">What they do<input id="term" value="${fmt.esc(d.search_term)}" placeholder="e.g. pharmacy" style="width:150px"></label>
+        <label class="f">Suburb<input id="area" value="${fmt.esc(d.area)}" placeholder="e.g. East Bentleigh VIC" style="width:190px"></label>
+        <button class="btn" id="gMaps" type="button">Open in Google Maps ↗</button>
+        ${d.places_enabled ? `<button class="btn primary" id="gFind" type="button">Find competitors automatically</button>${comp.list.length ? '<button class="btn" id="gRefresh" type="button">↻ Update their reviews</button>' : ''}` : ''}</div></div>
+      <p class="small muted">${d.places_enabled
+        ? 'Click “Find competitors automatically” to list the nearest similar businesses with their stars and reviews. Next month, click “Update their reviews” to see who gained how many.'
+        : 'Click <b>Open in Google Maps</b>: it searches “what they do near suburb”. Type the 3–6 nearest into the rows below: name, star rating and number of reviews (shown under each name on Maps), then click Save. <span class="muted">(Automatic search needs a Google Places key: see DEPLOY.md, Step 6.)</span>'}</p>
       <div id="compRows">${(comp.list.length ? comp.list : [{}, {}, {}]).map(c => compRow(c)).join('')}</div>
       <div class="row" style="gap:8px;margin-top:8px"><button class="btn sm" type="button" id="compAddRow">＋ Add row</button><button class="btn primary" type="button" id="compSave">Save competitors for ${editMonth}</button></div></div>`}
     ${d.series.length ? `<div class="card" style="margin-top:14px"><h2>All months</h2><div class="tw"><table><thead><tr><th>Month</th>${d.activity.map(([, l]) => `<th class="r">${l}</th>`).join('')}<th class="r">Reviews</th><th class="r">New</th><th class="r">Rating</th></tr></thead><tbody>
@@ -557,15 +562,28 @@ R.local = async () => {
     try { await api(`${base}/local/${month}`, { method: 'PUT', json: { values: fd } }); toast('Month saved'); route(); } catch (err) { toast(err.message, 6000); }
   };
   $('#compAddRow').onclick = () => $('#compRows').insertAdjacentHTML('beforeend', compRow({}));
-  const saveArea = async () => { const a = $('#area').value.trim(); if (a !== (CLIENT.area || '')) Object.assign(CLIENT, await api(base, { method: 'PATCH', json: { area: a } })); };
-  $('#area').onchange = saveArea;
+  const saveArea = async () => {
+    const a = $('#area').value.trim(), t = $('#term').value.trim();
+    if (a !== (CLIENT.area || '') || t !== (CLIENT.search_term || '')) Object.assign(CLIENT, await api(base, { method: 'PATCH', json: { area: a, search_term: t } }));
+  };
+  $('#area').onchange = saveArea; $('#term').onchange = saveArea;
+  $('#gMaps').onclick = () => {
+    const a = $('#area').value.trim(), t = $('#term').value.trim() || 'business';
+    if (!a) return toast('Type the suburb first');
+    saveArea().catch(() => {});
+    window.open('https://www.google.com/maps/search/' + encodeURIComponent(`${t} near ${a}`), '_blank', 'noopener');
+  };
+  const gf = $('#gFind');
+  if (gf) gf.onclick = async () => { gf.disabled = true; gf.textContent = 'Searching Google…';
+    try { await saveArea(); await api(`${base}/local/${editMonth}/find`, { method: 'POST' }); toast('Competitors found'); route(); }
+    catch (err) { toast(err.message, 7000); gf.disabled = false; gf.textContent = 'Find competitors automatically'; } };
   $('#compSave').onclick = async () => {
     const list = $$('#compRows .comprow').map(r => ({ name: $('[name=cn]', r).value.trim(), rating: $('[name=cr]', r).value, reviews: $('[name=cv]', r).value })).filter(x => x.name);
     try { await saveArea(); await api(`${base}/local/${editMonth}`, { method: 'PUT', json: { competitors: list } }); toast('Competitors saved'); route(); } catch (err) { toast(err.message, 6000); }
   };
   const rf = $('#gRefresh');
   if (rf) rf.onclick = async () => { rf.disabled = true; rf.textContent = 'Checking Google…';
-    try { await saveArea(); await api(`${base}/local/${editMonth}/refresh`, { method: 'POST' }); toast('Reviews updated'); route(); } catch (err) { toast(err.message, 7000); rf.disabled = false; rf.textContent = '↻ Update reviews from Google'; } };
+    try { await saveArea(); await api(`${base}/local/${editMonth}/refresh`, { method: 'POST' }); toast('Reviews updated'); route(); } catch (err) { toast(err.message, 7000); rf.disabled = false; rf.textContent = '↻ Update their reviews'; } };
 };
 function compRow(c) {
   return `<div class="row comprow" style="gap:8px;margin-top:6px"><input name="cn" placeholder="Competitor name" value="${fmt.esc(c.name || '')}" style="flex:1;min-width:180px">

@@ -487,3 +487,19 @@ def test_demo_sync_fills_demographics(client):
     assert a["ads"]["age"]["segments"] and a["web"]["city"]["segments"] and a["insights"]
     loc = client.get(f"/api/clients/{cid}/local").json()
     assert loc["ranking"] and loc["series"]
+
+
+def test_find_local_competitors(client, monkeypatch):
+    from app.services import competitors
+    cid = _cid(client, "Planwise Software")
+    client.patch(f"/api/clients/{cid}", json={"area": "East Bentleigh VIC", "search_term": "pharmacy"})
+    monkeypatch.setattr(competitors, "api_key", lambda: "k")
+    monkeypatch.setattr(competitors, "find", lambda term, area, d, n: [
+        {"name": "Planwise Software", "rating": 4.5, "reviews": 30, "is_self": True},
+        {"name": "Chemist One", "rating": 4.2, "reviews": 210, "is_self": False},
+        {"name": "Pharmacy Two", "rating": 4.9, "reviews": 45, "is_self": False}])
+    s = client.post(f"/api/clients/{cid}/local/2026-08/find").json()
+    assert [r["name"] for r in s["competitors"]["list"]] == ["Chemist One", "Pharmacy Two"]
+    assert s["search_term"] == "pharmacy" and "pharmacy+near+East+Bentleigh+VIC" in s["maps_link"]
+    aug = next(x for x in s["series"] if x["month"] == "2026-08")
+    assert aug["reviews_total"] == 30

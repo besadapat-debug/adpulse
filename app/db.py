@@ -331,6 +331,7 @@ MIGRATIONS = [
     "ALTER TABLE agency ADD COLUMN email TEXT DEFAULT ''",
     "ALTER TABLE agency ADD COLUMN website TEXT DEFAULT ''",
     "ALTER TABLE clients ADD COLUMN area TEXT DEFAULT ''",
+    "ALTER TABLE clients ADD COLUMN search_term TEXT DEFAULT ''",
     "ALTER TABLE users ADD COLUMN client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE",
 ]
 

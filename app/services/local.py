@@ -131,10 +131,11 @@ def summary(client_id: int) -> dict:
     for k, _ in ACTIVITY:
         a, b = latest.get(k), prev.get(k)
         changes[k] = ((a - b) / b) if a is not None and b else None
-    c = db.one("SELECT name, area FROM clients WHERE id=?", (client_id,)) or {}
+    c = db.one("SELECT name, area, search_term FROM clients WHERE id=?", (client_id,)) or {}
     return {"series": series, "latest": latest, "previous": prev, "changes": changes, "activity": ACTIVITY,
             "competitors": comp, "ranking": ranking, "rank": rank, "of": len(ranking), "top_competitor": top,
-            "places_enabled": bool(comp_svc.api_key()), "area": c.get("area") or "", "suggest_month": last_full_month()}
+            "places_enabled": bool(comp_svc.api_key()), "area": c.get("area") or "", "search_term": c.get("search_term") or "",
+            "maps_link": comp_svc.maps_link(c.get("search_term") or "", c.get("area") or "") if c.get("area") else "", "suggest_month": last_full_month()}
 
 
 def refresh_reviews(client_id: int, month: str) -> dict:
@@ -160,3 +161,21 @@ def refresh_reviews(client_id: int, month: str) -> dict:
         save_month(client_id, month, {"reviews_total": me.get("reviews"), "rating": me.get("rating")})
     save_competitors(client_id, month, [{"name": n, "rating": (found.get(n) or {}).get("rating"), "reviews": (found.get(n) or {}).get("reviews")} for n in names])
     return {"updated": len(found)}
+
+
+def find_competitors(client_id: int, month: str) -> dict:
+    """Search Google Places for similar businesses in the client's suburb and track the top few (needs a Places key)."""
+    month = _month(month)
+    c = db.one("SELECT name, area, search_term FROM clients WHERE id=?", (client_id,))
+    term, area = (c or {}).get("search_term") or "", (c or {}).get("area") or ""
+    if not term or not area:
+        raise ValueError("Fill in 'What they do' (e.g. pharmacy) and 'Suburb' first.")
+    found = comp_svc.find(term, area, "", c["name"])
+    me = next((f for f in found if f["is_self"]), None)
+    if me:
+        save_month(client_id, month, {"reviews_total": me.get("reviews"), "rating": me.get("rating")})
+    others = [f for f in found if not f["is_self"]][:6]
+    if not others:
+        raise ValueError(f"Google found no '{term}' businesses near {area}. Try a broader search word or add the suburb's state (e.g. VIC).")
+    save_competitors(client_id, month, [{"name": f["name"], "rating": f.get("rating"), "reviews": f.get("reviews")} for f in others])
+    return {"found": len(others)}
