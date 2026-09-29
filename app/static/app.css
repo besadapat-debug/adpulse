@@ -108,7 +108,7 @@ tr.link { cursor: pointer; }
 .badge.accent { background: var(--accent-soft); color: var(--accent-text); border-color: transparent; }
 
 /* tabs */
-.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 18px; overflow-x: auto; }
+.tabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
 .tabs a { padding: 9px 12px; color: var(--text-2); font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
 .tabs a:hover { color: var(--text); text-decoration: none; }
 .tabs a.on { color: var(--text); border-bottom-color: var(--accent); }

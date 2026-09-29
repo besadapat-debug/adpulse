@@ -88,7 +88,7 @@ async function createClient(e) {
   const fd = new FormData(e.target);
   try {
     const r = await api('/api/clients', { method: 'POST', body: fd });
-    location.href = '/clients/' + r.id + '#connections';
+    location.href = '/clients/' + r.id + '#local';
   } catch (err) { toast(err.message); }
   return false;
 }
