@@ -700,6 +700,16 @@ async def put_trial(cid: int, request: Request, user=Depends(require_editor)):
         raise HTTPException(400, str(e))
 
 
+@app.post("/api/clients/{cid}/trial/website/{which}")
+def trial_website(cid: int, which: str, user=Depends(require_editor)):
+    from .services import trial
+    _client(cid)
+    try:
+        return trial.website_check(cid, which)
+    except (ValueError, httpx.HTTPError) as e:
+        raise HTTPException(400, f"Couldn't check the website: {e}")
+
+
 def _trial_page(request: Request, cid: int, shared: bool):
     from .services import trial
     rep = trial.report(cid)

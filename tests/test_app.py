@@ -532,3 +532,25 @@ def test_seven_day_trial(client):
         assert c.get(f"/api/clients/{cid}/trial").json()["done"] == 1
         assert c.get(f"/clients/{cid}/trial-report").status_code == 200
         assert c.put(f"/api/clients/{cid}/trial", json={"goal": "x"}).status_code == 403
+
+
+def test_trial_website_before_after(client, monkeypatch):
+    from app.seed import EXAMPLE_SITES
+    from app.services import prospects
+    cid = _cid(client)
+    client.post(f"/api/clients/{cid}/trial/start", json={})
+    client.put(f"/api/clients/{cid}/trial", json={"website_url": "https://pharmacy.example/"})
+    pages = {"before": EXAMPLE_SITES[0][4], "after": EXAMPLE_SITES[2][4]}   # a weak site, then a well set-up one
+    state = {"which": "before"}
+    monkeypatch.setattr(prospects, "fetch", lambda url: {"requested": url, "final_url": url, "status": 200, "html": pages[state["which"]],
+                                                         "bytes": 50000, "seconds": 0.8, "robots": True, "sitemap": True})
+    monkeypatch.setattr(prospects, "pagespeed", lambda url, screenshot=False: {"score": 80, "screenshot": "data:image/jpeg;base64,AAAA"})
+    t = client.post(f"/api/clients/{cid}/trial/website/before").json()
+    assert t["website"]["before"]["score"] < 60 and t["website"]["todo"] and t["website_tips"]
+    state["which"] = "after"
+    t = client.post(f"/api/clients/{cid}/trial/website/after").json()
+    w = t["website"]
+    assert w["after"]["score"] > w["before"]["score"] and w["fixed"] and w["score_change"] > 0
+    page = client.get(f"/clients/{cid}/trial-report").text
+    assert "Your website" in page and "website score up from" in page and "data:image/jpeg;base64,AAAA" in page
+    assert client.post(f"/api/clients/{cid}/trial/website/sideways").status_code == 400

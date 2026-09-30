@@ -33,6 +33,10 @@
   .done li::marker { content: "✓  "; color: #16a34a; font-weight: 700; }
   .offer { border: 2px solid var(--brand); border-radius: 12px; padding: 14px 16px; margin-top: 10px; }
   .offer .price { font-size: 22px; font-weight: 800; }
+  .wrow { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; }
+  .wbox { border: 1px solid #e5e7eb; border-radius: 12px; padding: 10px 12px; text-align: center; }
+  .wbox img { display: block; width: 180px; border-radius: 10px; border: 1px solid #e5e7eb; margin-top: 6px; }
+  .ws { font-size: 30px; font-weight: 800; } .ws span { font-size: 13px; color: #6b7280; font-weight: 500; }
   footer { margin-top: 26px; padding-top: 12px; border-top: 1px solid #e5e7eb; font-size: 12.5px; color: #4b5563; }
   body.noprice .price-only { display: none; }
   @page { size: A4; margin: 12mm; }
@@ -63,6 +67,18 @@
       <td class="r">{% if x.change is none %}–{% elif x.change > 0 %}<span class="up">+{{ ('%.1f' % x.change) if x.rating else ('%.0f' % x.change) }}{{ '%' if x.pct }}</span>{% elif x.change == 0 %}<span class="flat">no change</span>{% else %}{{ ('%.1f' % x.change) if x.rating else ('%.0f' % x.change) }}{% endif %}</td></tr>{% endfor %}
   </tbody></table>
   <p class="muted">Some Google figures update a few days late, and a week is short, so the bigger changes (more calls and visits) build over the following weeks.</p>
+  {% endif %}
+
+  {% set w = t.website %}
+  {% if w and (w.before.score is defined or w.after.score is defined) %}
+  <h2>Your website</h2>
+  <div class="wrow">
+    {% if w.before.score is defined %}<div class="wbox"><div class="muted">Day 1</div><div class="ws">{{ w.before.score }}<span>/100</span></div>
+      {% if w.before.screenshot %}<img src="{{ w.before.screenshot }}" alt="Website before">{% endif %}</div>{% endif %}
+    {% if w.after.score is defined %}<div class="wbox"><div class="muted">Day 7</div><div class="ws" style="color:#16a34a">{{ w.after.score }}<span>/100</span></div>
+      {% if w.after.screenshot %}<img src="{{ w.after.screenshot }}" alt="Website after">{% endif %}</div>{% endif %}
+  </div>
+  {% if w.fixed %}<ul class="done">{% for c in w.fixed %}<li>{{ c.title }}</li>{% endfor %}</ul>{% endif %}
   {% endif %}
 
   {% if r.done %}

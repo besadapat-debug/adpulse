@@ -150,7 +150,7 @@ def fetch(url: str) -> dict:
             "seconds": round(elapsed, 2), "robots": extras.get("/robots.txt", False), "sitemap": extras.get("/sitemap.xml", False)}
 
 
-def pagespeed(url: str) -> dict | None:
+def pagespeed(url: str, screenshot: bool = False) -> dict | None:
     key = os.getenv("PAGESPEED_API_KEY", "")
     try:
         r = httpx.get("https://www.googleapis.com/pagespeedonline/v5/runPagespeed",
@@ -159,8 +159,13 @@ def pagespeed(url: str) -> dict | None:
             return None
         lh = r.json()["lighthouseResult"]
         a = lh["audits"]
-        return {"score": round(lh["categories"]["performance"]["score"] * 100),
-                "lcp": a.get("largest-contentful-paint", {}).get("displayValue"), "cls": a.get("cumulative-layout-shift", {}).get("displayValue")}
+        out = {"score": round(lh["categories"]["performance"]["score"] * 100),
+               "lcp": a.get("largest-contentful-paint", {}).get("displayValue"), "cls": a.get("cumulative-layout-shift", {}).get("displayValue")}
+        if screenshot:   # how the page looks on a phone, as Google's test phone saw it (a small JPEG data URL)
+            shot = (a.get("final-screenshot", {}).get("details") or {}).get("data", "")
+            if shot.startswith("data:image/") and len(shot) < 400_000:
+                out["screenshot"] = shot
+        return out
     except Exception:
         return None
 

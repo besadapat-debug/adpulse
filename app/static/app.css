@@ -242,3 +242,10 @@ table.snap td { padding: 5px 6px; } table.snap input[type=number] { width: 90px;
 .ttask { padding: 6px 0; }
 .ttask.done b { text-decoration: line-through; color: var(--text-3); }
 .tnote { margin: 4px 0 0 26px; width: calc(100% - 26px); font-size: 12.5px; padding: 5px 8px; }
+.wcompare { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
+.wshot { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; text-align: center; }
+.wshot img { display: block; width: 170px; border-radius: 10px; border: 1px solid var(--border); margin-top: 6px; }
+.wscore { font-size: 30px; font-weight: 800; } .wscore span { font-size: 13px; color: var(--text-3); font-weight: 500; }
+.wscore.good { color: var(--good); } .wscore.warn { color: var(--warn); } .wscore.bad { color: var(--bad); }
+.warrow { font-size: 28px; color: var(--text-3); }
+.wtodo { padding: 8px 0; border-bottom: 1px solid var(--border); } .wtodo:last-child { border-bottom: 0; }

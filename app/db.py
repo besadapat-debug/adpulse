@@ -346,6 +346,9 @@ MIGRATIONS = [
     "ALTER TABLE agency ADD COLUMN website TEXT DEFAULT ''",
     "ALTER TABLE clients ADD COLUMN area TEXT DEFAULT ''",
     "ALTER TABLE clients ADD COLUMN search_term TEXT DEFAULT ''",
+    "ALTER TABLE trials ADD COLUMN website_url TEXT DEFAULT ''",
+    "ALTER TABLE trials ADD COLUMN website_before TEXT DEFAULT '{}'",
+    "ALTER TABLE trials ADD COLUMN website_after TEXT DEFAULT '{}'",
     "ALTER TABLE users ADD COLUMN client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE",
 ]
 

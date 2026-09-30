@@ -62,7 +62,7 @@ def _row(client_id: int) -> dict | None:
     if not r:
         return None
     out = dict(r)
-    for k in ("baseline", "after", "tasks", "checks_before", "checks_after"):
+    for k in ("baseline", "after", "tasks", "checks_before", "checks_after", "website_before", "website_after"):
         try:
             out[k] = json.loads(out.get(k) or ("[]" if k == "tasks" else "{}"))
         except Exception:
@@ -88,6 +88,8 @@ def update(client_id: int, body: dict) -> dict:
     if "start_date" in body:
         date.fromisoformat(str(body["start_date"]))
         fields["start_date"] = str(body["start_date"])
+    if "website_url" in body:
+        fields["website_url"] = str(body["website_url"]).strip()[:300]
     if "show_price" in body:
         fields["show_price"] = 1 if body["show_price"] else 0
     for k in ("baseline", "after"):
@@ -131,7 +133,8 @@ def get(client_id: int) -> dict:
     done = sum(1 for x in t["tasks"] if x["done"])
     return {**t, "started": True, "fields": SNAPSHOT_FIELDS, "profile_checks": PROFILE_CHECKS, "day": day,
             "end_date": (start_d + timedelta(days=6)).isoformat(), "done": done, "total": len(t["tasks"]),
-            "completeness_before": _completeness(t["checks_before"]), "completeness_after": _completeness(t["checks_after"])}
+            "completeness_before": _completeness(t["checks_before"]), "completeness_after": _completeness(t["checks_after"]),
+            "website": website_compare(t), "website_tips": WEBSITE_TIPS}
 
 
 def report(client_id: int) -> dict:
@@ -165,8 +168,58 @@ def report(client_id: int) -> dict:
                 wins.append(f"{r['change']:.0f} new Google post{'s' if r['change'] != 1 else ''}")
             elif not r.get("rating"):
                 wins.append(f"{r['change']:.0f} more {r['label'].split(' (')[0].lower()}")
+    w = t.get("website")
+    if w and w["score_change"] and w["score_change"] > 0:
+        wins.insert(0, f"website score up from {w['before']['score']} to {w['after']['score']}/100")
     done = [x for x in t["tasks"] if x["done"] and not x.get("internal")]      # the owner sees the work, not our admin
     rc = pricing.rate_card()
     lite = round(rc["lite_monthly"] / 10) * 10
     return {"started": True, "client": c, "trial": t, "rows": rows, "wins": wins, "done": done,
             "not_done": [x for x in t["tasks"] if not x["done"]], "lite_price": lite, "show_price": bool(t.get("show_price", 1))}
+
+
+WEBSITE_TIPS = [
+    ("Clear top section", "Business name, phone (tap-to-call on mobile), today's hours and one main button such as 'Book a vaccination', all visible without scrolling."),
+    ("Real photos", "Replace stock images with real photos of the shopfront, counter and team (with their OK). No photos of customers."),
+    ("One page per service", "Vaccinations, blister/Webster packs, script refills, health checks: what it is, who it's for, how to book."),
+    ("Easy to book or call", "A booking button or form on every page, and the phone number in the header."),
+    ("Matches Google", "Same name, address, phone and hours as the Google listing, and a Google map on the contact page."),
+    ("Fast and mobile-first", "Compress large images, remove pop-ups and old plugins. Most visitors are on a phone."),
+    ("Trust without testimonials", "Pharmacist names, qualifications and memberships; accurate, factual service info. No patient testimonials or outcome claims (Ahpra)."),
+    ("Tidy and current", "Remove old promotions and broken links, use 2 fonts and the brand colours consistently, update the footer year."),
+]
+
+
+def website_check(client_id: int, which: str) -> dict:
+    """Scan the client's website (same checks as the prospect audit) and keep it as the 'before' or 'after' snapshot."""
+    from . import prospects
+    if which not in ("before", "after"):
+        raise ValueError("which must be before or after")
+    t = _row(client_id)
+    if not t:
+        raise ValueError("Start the trial first.")
+    url = (t.get("website_url") or "").strip()
+    if not url:
+        raise ValueError("Type their website address first.")
+    page = prospects.fetch(url)
+    speed = prospects.pagespeed(page["final_url"], screenshot=True)
+    rep = prospects.analyse(page, speed)
+    checks = [{"key": c["key"], "ok": bool(c["ok"]), "title": c["title"], "fix": c.get("fix", ""), "impact": c.get("impact", ""),
+               "problem": prospects.problem_label(c), "weight": c.get("weight", 1)} for c in rep["checks"]]
+    snap = {"date": date.today().isoformat(), "url": page["final_url"], "score": rep["score"], "checks": checks,
+            "speed": (speed or {}).get("score"), "screenshot": (speed or {}).get("screenshot", "")}
+    db.execute(f"UPDATE trials SET website_{which}=? WHERE client_id=?", (json.dumps(snap), client_id))
+    return get(client_id)
+
+
+def website_compare(t: dict) -> dict | None:
+    b, a = t.get("website_before") or {}, t.get("website_after") or {}
+    if not b and not a:
+        return None
+    bk = {c["key"]: c for c in b.get("checks", [])}
+    ak = {c["key"]: c for c in a.get("checks", [])}
+    fixed = [ak[k] for k in ak if ak[k]["ok"] and k in bk and not bk[k]["ok"]]
+    latest = a or b
+    todo = sorted([c for c in latest.get("checks", []) if not c["ok"]], key=lambda c: -c.get("weight", 1))
+    return {"before": b, "after": a, "fixed": fixed, "todo": todo,
+            "score_change": (a["score"] - b["score"]) if a and b else None}

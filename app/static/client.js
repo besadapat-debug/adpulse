@@ -526,6 +526,7 @@ R.trial = async () => {
         ${IS_CLIENT ? '' : '<button class="btn" id="tLink">Copy report link</button><button class="btn ghost" id="tRestart">Restart</button>'}</div></div>
       <label class="f" style="margin-top:12px">Goal for the week<input id="tGoal" value="${fmt.esc(t.goal || '')}" placeholder="e.g. more flu vaccination bookings and new Google reviews" ${ro}></label></div>
 
+    ${webCard(t, ro)}
     <div class="grid g2" style="margin-top:14px">
       <div class="card"><h2>Before &amp; after numbers</h2>
         <p class="small muted">Fill in <b>Day 1</b> now and <b>Day 7</b> at the end. Reviews, rating and photos are on their Google Maps listing; posts, calls and directions are in their Google Business Profile → Performance (needs Manager access). Leave blank what you can't see.</p>
@@ -552,6 +553,14 @@ R.trial = async () => {
         <label class="f">Day<select name="day">${days.map(d => `<option ${d === t.day ? 'selected' : ''}>${d}</option>`).join('')}</select></label><button class="btn">Add</button></form>`}
     </div>`;
   if (IS_CLIENT) return;
+  $('#wUrl').onchange = e => put({ website_url: e.target.value }, 'Website saved');
+  $$('[data-wcheck]').forEach(btn => btn.onclick = async () => {
+    const which = btn.dataset.wcheck;
+    if (!$('#wUrl').value.trim()) return toast('Type their website address first');
+    btn.disabled = true; btn.textContent = 'Checking… (up to a minute)';
+    try { await put({ website_url: $('#wUrl').value }); await api(`${base}/trial/website/${which}`, { method: 'POST' }); toast('Website checked'); route(); }
+    catch (err) { toast(err.message, 8000); btn.disabled = false; btn.textContent = which === 'before' ? 'Check website (Day 1)' : 'Check again (Day 7)'; }
+  });
   const put = (body, msg) => api(`${base}/trial`, { method: 'PUT', json: body }).then(() => { if (msg) toast(msg); });
   $$('[data-task]').forEach(cb => cb.onchange = async () => { await put({ tasks: [{ id: cb.dataset.task, done: cb.checked, note: $(`[data-note="${cb.dataset.task}"]`).value }] }); route(); });
   $$('[data-note]').forEach(inp => inp.onchange = () => put({ tasks: [{ id: inp.dataset.note, done: $(`[data-task="${inp.dataset.note}"]`).checked, note: inp.value }] }, 'Note saved'));
@@ -568,6 +577,28 @@ R.trial = async () => {
     try { await navigator.clipboard.writeText(r.url); toast('Report link copied: paste it into a text or email to the owner', 6000); } catch { prompt('Report link:', r.url); } };
   $('#tRestart').onclick = async () => { if (!confirm('Start the trial again from scratch? All ticks and numbers are cleared.')) return; await api(`${base}/trial/start`, { json: {} }); route(); };
 };
+
+
+function webCard(t, ro) {
+  const w = t.website, b = w?.before || {}, a = w?.after || {};
+  const ring = (snap, label) => snap.score != null ? `<div class="wshot"><div class="small muted">${label} · ${snap.date}</div>
+      <div class="wscore ${snap.score >= 70 ? 'good' : snap.score >= 50 ? 'warn' : 'bad'}">${snap.score}<span>/100</span></div>
+      ${snap.screenshot ? `<img src="${snap.screenshot}" alt="${label} on a phone">` : '<div class="small muted" style="margin-top:6px">No phone screenshot (Google speed test didn\'t respond)</div>'}</div>` : '';
+  return `<div class="card" style="margin-top:14px"><h2>Their website: before &amp; after</h2>
+    <p class="small muted">Scan the site on day 1, fix what it finds during the week, then scan again on day 7. The report shows the score, a phone screenshot before and after, and everything that was fixed. You'll need access to their website (WordPress, Wix, Squarespace…) or whoever manages it.</p>
+    <div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap">
+      <label class="f" style="flex:1;min-width:220px">Their website<input id="wUrl" value="${fmt.esc(t.website_url || '')}" placeholder="e.g. eastbentleighpharmacy.com.au" ${ro}></label>
+      ${IS_CLIENT ? '' : `<button class="btn ${b.score == null ? 'primary' : ''}" data-wcheck="before">${b.score == null ? 'Check website (Day 1)' : 'Re-check Day 1'}</button>
+        <button class="btn ${b.score != null && a.score == null ? 'primary' : ''}" data-wcheck="after" ${b.score == null ? 'disabled' : ''}>Check again (Day 7)</button>`}</div>
+    ${w ? `<div class="wcompare">${ring(b, 'Before')}${a.score != null ? `<div class="warrow">→</div>${ring(a, 'After')}` : ''}</div>
+      ${w.fixed.length ? `<h3>Fixed this week</h3>${w.fixed.map(c => `<div class="small" style="margin:3px 0">✓ ${fmt.esc(c.title)}</div>`).join('')}` : ''}
+      ${w.todo.length ? `<h3>${a.score != null ? 'Still to fix' : 'What to fix this week'} <span class="small muted">(most important first)</span></h3>
+        ${w.todo.map(c => `<div class="wtodo"><b>${fmt.esc(c.problem || c.title)}</b><div class="small">${fmt.esc(c.fix)}</div><div class="small muted">${fmt.esc(c.impact)}</div></div>`).join('')}`
+        : '<div class="callout small" style="margin-top:10px">No problems found by the scan. Use the tips below to make it look more professional.</div>'}` : ''}
+    <details style="margin-top:12px"><summary><b>How to make a pharmacy website look professional</b> <span class="small muted">· 8 quick wins</span></summary>
+      ${t.website_tips.map(([h, d]) => `<div class="wtodo"><b>${fmt.esc(h)}</b><div class="small">${fmt.esc(d)}</div></div>`).join('')}</details>
+  </div>`;
+}
 
 /* ---------------- Google Maps & reviews ---------------- */
 const GBP_HELP = 'Where to find these: open business.google.com (or search the business name on Google while signed in) → Performance → choose the month.';
