@@ -67,12 +67,19 @@ CLIENT_PATHS = re.compile(r"^/(?:$|logout$|clients/(?P<a>\d+)(?:/monthly|/trial-
                           r"api/clients/(?P<b>\d+)(?:/(?:performance|engagement|organic|seo|email|audience|local|monthly|trial))?$)")
 
 
+CLIENT_WRITE = re.compile(r"^/api/clients/(\d+)/(?:details|photos(?:/\d+)?)$")
+
+
 def require_user(request: Request) -> dict:
     u = current_user(request)
     if not u:
         raise HTTPException(401, "Not signed in")
     if u["role"] == "client":
-        m = CLIENT_PATHS.match(request.url.path)
+        path = request.url.path
+        w = CLIENT_WRITE.match(path)
+        if w and request.method in ("GET", "POST", "PUT", "DELETE") and u["client_id"] and int(w.group(1)) == u["client_id"]:
+            return u                      # the owner may fill in their own business details and photos
+        m = CLIENT_PATHS.match(path)
         cid = m and (m.group("a") or m.group("b"))
         if not m or request.method != "GET" or (cid and int(cid) != u["client_id"]) or not u["client_id"]:
             raise HTTPException(403, "This login can only see its own business")
@@ -737,6 +744,62 @@ def trial_shared(request: Request, token: str):
     if not data or "trial" not in data:
         raise HTTPException(404, "Report link invalid or expired")
     return _trial_page(request, data["trial"], True)
+
+
+@app.get("/api/clients/{cid}/details")
+def get_details(cid: int, user=Depends(require_user)):
+    from .services import details
+    _client(cid)
+    return details.get(cid)
+
+
+@app.put("/api/clients/{cid}/details")
+async def put_details(cid: int, request: Request, user=Depends(require_user)):
+    from .services import details
+    if user["role"] == "viewer":
+        raise HTTPException(403, "Read-only account")
+    _client(cid)
+    return details.save(cid, await request.json(), user["email"])
+
+
+@app.post("/api/clients/{cid}/photos")
+async def upload_photo(cid: int, file: UploadFile = File(...), category: str = Form("other"), caption: str = Form(""),
+                       user=Depends(require_user)):
+    from .services import details
+    if user["role"] == "viewer":
+        raise HTTPException(403, "Read-only account")
+    _client(cid)
+    raw = await file.read(details.MAX_PHOTO_BYTES + 1)
+    try:
+        return details.add_photo(cid, raw, file.filename or "photo.jpg", category, caption, user["email"])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/clients/{cid}/photos/{photo_id}")
+def get_photo(cid: int, photo_id: int, user=Depends(require_user)):
+    from .services import details
+    got = details.photo(cid, photo_id)
+    if not got:
+        raise HTTPException(404)
+    data, ctype, name = got
+    return Response(data, media_type=ctype, headers={"Cache-Control": "private, max-age=86400", "Content-Disposition": f'inline; filename="{name}"'})
+
+
+@app.delete("/api/clients/{cid}/photos/{photo_id}")
+def delete_photo(cid: int, photo_id: int, user=Depends(require_user)):
+    from .services import details
+    if user["role"] == "viewer":
+        raise HTTPException(403, "Read-only account")
+    return details.delete_photo(cid, photo_id)
+
+
+@app.get("/api/clients/{cid}/photos.zip")
+def photos_zip(cid: int, user=Depends(require_editor)):
+    from .services import details
+    c = _client(cid)
+    return Response(details.photos_zip(cid), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{c["slug"]}-photos-and-details.zip"'})
 
 
 @app.get("/api/clients/{cid}/logins")

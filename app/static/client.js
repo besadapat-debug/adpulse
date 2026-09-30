@@ -2,7 +2,7 @@
 currency = CLIENT.currency || 'AUD';
 let days = 30;
 const view = $('#view');
-const TABS = ['monthly', 'trial', 'local', 'performance', 'engagement', 'audience', 'organic', 'seo', 'email', 'attribution', 'people', 'companies', 'audiences', 'budget', 'alerts', 'upload', 'connections', 'settings'];
+const TABS = ['monthly', 'trial', 'details', 'local', 'performance', 'engagement', 'audience', 'organic', 'seo', 'email', 'attribution', 'people', 'companies', 'audiences', 'budget', 'alerts', 'upload', 'connections', 'settings'];
 let base = `/api/clients/${CLIENT.id}`;
 function setClient(c) { Object.keys(CLIENT).forEach(k => delete CLIENT[k]); Object.assign(CLIENT, c); base = `/api/clients/${c.id}`; currency = c.currency || 'AUD'; }
 
@@ -499,6 +499,70 @@ R.monthly = async () => {
     try { await navigator.clipboard.writeText(r.url); toast('Link copied (works for 120 days). Paste it into an email or text to the owner.', 6000); } catch { prompt('Report link:', r.url); } };
 };
 
+
+
+/* ---------------- business details & photos (the owner can fill this in) ---------------- */
+async function shrinkImage(file, max = 1600) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = bad; i.src = url; });
+    const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return await new Promise(ok => c.toBlob(ok, 'image/jpeg', 0.85));
+  } finally { URL.revokeObjectURL(url); }
+}
+R.details = async () => {
+  const d = await api(`${base}/details`);
+  setPeriod(null); $('#periodLabel').textContent = 'Business details & photos';
+  const v = d.details;
+  const field = ([k, label, typ, help]) => `<label class="f">${fmt.esc(label)}
+    ${typ === 'textarea' ? `<textarea name="${k}" rows="${k === 'description' || k === 'services' || k === 'hours' ? 4 : 2}">${fmt.esc(v[k] || '')}</textarea>`
+      : typ === 'select' ? `<select name="${k}"><option value=""></option>${d.platforms.map(p => `<option ${p === v[k] ? 'selected' : ''}>${fmt.esc(p)}</option>`).join('')}</select>`
+      : `<input name="${k}" value="${fmt.esc(v[k] || '')}">`}
+    ${help ? `<span class="small muted">${fmt.esc(help)}</span>` : ''}</label>`;
+  view.innerHTML = `
+    <div class="callout small" style="margin-bottom:12px">${IS_CLIENT
+      ? `<b>Help us set up your Google listing and website.</b> Fill in what you can and upload a few photos. It saves as you go, and you can come back any time.`
+      : `The owner can fill this in from their own login (Client settings → Client login). Everything you need for their Google profile and website in one place. <a href="${base}/photos.zip">⬇ Download all photos &amp; details (zip)</a>`}
+      ${d.updated_at ? `<div class="muted" style="margin-top:4px">Last updated ${fmt.esc(d.updated_at)}${d.updated_by ? ' by ' + fmt.esc(d.updated_by) : ''}</div>` : ''}</div>
+    <div class="grid g2">
+      <form class="card" id="detForm"><div class="row" style="justify-content:space-between"><h2>Business details</h2><span class="badge ${d.filled === d.total ? 'good' : ''}">${d.filled} of ${d.total} filled in</span></div>
+        <div style="display:grid;gap:12px">${d.fields.map(field).join('')}</div>
+        <div style="margin-top:12px"><button class="btn primary">Save details</button></div></form>
+      <div>
+        <div class="card"><h2>Access for the agency <span class="badge ${d.access_done === d.access.length ? 'good' : 'warn'}">${d.access_done} of ${d.access.length}</span></h2>
+          ${d.access.map(([k, label, help]) => `<label class="row small" style="gap:8px;align-items:flex-start;flex-wrap:nowrap;margin:8px 0"><input type="checkbox" data-acc="${k}" ${v[k] ? 'checked' : ''} style="margin-top:3px">
+            <span><b>${fmt.esc(label)}</b>${help ? `<div class="muted">${fmt.esc(help)}</div>` : ''}</span></label>`).join('')}</div>
+        <div class="card" style="margin-top:14px"><h2>Photos <span class="small muted">${d.photos.length} uploaded</span></h2>
+          <p class="small muted">Real photos beat stock photos. Good ones to add: ${d.photo_types.slice(0, 6).map(([, l]) => l.toLowerCase()).join(', ')}. Take them in landscape, in good light. Please no photos of customers or patients.</p>
+          <div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap">
+            <label class="f">What's in the photo<select id="phCat">${d.photo_types.map(([k, l]) => `<option value="${k}">${fmt.esc(l)}</option>`).join('')}</select></label>
+            <label class="btn primary" style="cursor:pointer">📷 Choose photos<input type="file" id="phFiles" accept="image/*" multiple hidden></label></div>
+          <div id="phStatus" class="small" style="margin-top:6px"></div>
+          <div class="photos">${d.photos.map(p => `<div class="ph"><a href="${base}/photos/${p.id}" target="_blank" rel="noopener"><img loading="lazy" src="${base}/photos/${p.id}" alt="${fmt.esc(p.caption || p.category)}"></a>
+            <div class="small"><span class="badge">${fmt.esc((d.photo_types.find(t => t[0] === p.category) || [, p.category])[1])}</span></div>
+            <button class="btn sm ghost" data-delph="${p.id}" type="button">Delete</button></div>`).join('') || '<div class="empty small">No photos yet</div>'}</div></div>
+      </div>
+    </div>`;
+  const saveDetails = async (body, msg) => { try { await api(`${base}/details`, { method: 'PUT', json: body }); if (msg) toast(msg); } catch (e) { toast(e.message, 6000); } };
+  $('#detForm').onsubmit = async e => { e.preventDefault(); await saveDetails(Object.fromEntries(new FormData(e.target)), 'Details saved'); route(); };
+  $$('#detForm input, #detForm textarea, #detForm select').forEach(i => i.onchange = () => saveDetails({ [i.name]: i.value }));
+  $$('[data-acc]').forEach(cb => cb.onchange = async () => { await saveDetails({ [cb.dataset.acc]: cb.checked }, 'Saved'); route(); });
+  $$('[data-delph]').forEach(b => b.onclick = async () => { if (!confirm('Delete this photo?')) return; await api(`${base}/photos/${b.dataset.delph}`, { method: 'DELETE' }); route(); });
+  $('#phFiles').onchange = async e => {
+    const files = [...e.target.files]; const st = $('#phStatus'); let ok = 0;
+    for (const [i, f] of files.entries()) {
+      st.textContent = `Uploading ${i + 1} of ${files.length}…`;
+      try {
+        const blob = await shrinkImage(f);
+        const fd = new FormData(); fd.append('file', blob, f.name.replace(/\.[^.]+$/, '') + '.jpg'); fd.append('category', $('#phCat').value);
+        await api(`${base}/photos`, { method: 'POST', body: fd }); ok++;
+      } catch (err) { toast(`${f.name}: ${err.message}`, 6000); }
+    }
+    toast(`${ok} photo${ok === 1 ? '' : 's'} uploaded`); route();
+  };
+};
 
 /* ---------------- 7-day trial ---------------- */
 R.trial = async () => {

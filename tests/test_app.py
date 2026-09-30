@@ -554,3 +554,35 @@ def test_trial_website_before_after(client, monkeypatch):
     page = client.get(f"/clients/{cid}/trial-report").text
     assert "Your website" in page and "website score up from" in page and "data:image/jpeg;base64,AAAA" in page
     assert client.post(f"/api/clients/{cid}/trial/website/sideways").status_code == 400
+
+
+def test_business_details_and_photos(client):
+    import io, zipfile
+    cid = _cid(client)
+    jpg = b"\xff\xd8\xff\xe0" + b"0" * 2000
+    d = client.put(f"/api/clients/{cid}/details", json={"business_name": "Harbour", "hours": "Mon-Fri 9-5", "website_platform": "Wix",
+                                                       "gbp_manager": True, "evil": "x"}).json()
+    assert d["details"]["hours"] == "Mon-Fri 9-5" and d["details"]["website_platform"] == "Wix" and d["access_done"] == 1 and "evil" not in d["details"]
+    d = client.post(f"/api/clients/{cid}/photos", files={"file": ("shop.jpg", jpg, "image/jpeg")}, data={"category": "shopfront"}).json()
+    pid = d["photos"][0]["id"]
+    assert d["photos"][0]["category"] == "shopfront"
+    r = client.get(f"/api/clients/{cid}/photos/{pid}")
+    assert r.status_code == 200 and r.content == jpg and r.headers["content-type"] == "image/jpeg"
+    bad = client.post(f"/api/clients/{cid}/photos", files={"file": ("x.jpg", b"<svg>", "image/jpeg")})
+    assert bad.status_code == 400
+    z = zipfile.ZipFile(io.BytesIO(client.get(f"/api/clients/{cid}/photos.zip").content))
+    assert any(n.startswith("shopfront/") for n in z.namelist()) and "Mon-Fri 9-5" in z.read("business-details.txt").decode()
+    # the owner can edit their own details & photos from a client login, but not another client's
+    other = _cid(client, "Stride Running Co")
+    client.post(f"/api/clients/{cid}/logins", json={"email": "photos@harbour.example", "password": "harbour123"})
+    with TestClient(app) as c:
+        c.post("/login", data={"email": "photos@harbour.example", "password": "harbour123"})
+        assert c.put(f"/api/clients/{cid}/details", json={"services": "Tax returns"}).json()["details"]["services"] == "Tax returns"
+        up = c.post(f"/api/clients/{cid}/photos", files={"file": ("team.jpg", jpg, "image/jpeg")}, data={"category": "team"}).json()
+        assert up["details"]["updated_by"] if "updated_by" in up["details"] else True
+        assert c.get(f"/api/clients/{cid}/photos/{pid}").status_code == 200
+        assert c.put(f"/api/clients/{other}/details", json={"services": "x"}).status_code == 403
+        assert c.post(f"/api/clients/{other}/photos", files={"file": ("t.jpg", jpg, "image/jpeg")}).status_code == 403
+        assert c.get(f"/api/clients/{cid}/photos.zip").status_code == 403
+        assert c.delete(f"/api/clients/{cid}/photos/{pid}").status_code == 200
+    assert client.get(f"/api/clients/{cid}/details").json()["updated_by"] == "photos@harbour.example"

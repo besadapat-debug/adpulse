@@ -330,6 +330,27 @@ CREATE TABLE IF NOT EXISTS trials (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Business details the owner fills in (hours, services, description, access checklist) and their photos.
+CREATE TABLE IF NOT EXISTS client_details (
+  client_id INTEGER PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE,
+  details TEXT DEFAULT '{}',
+  updated_by TEXT DEFAULT '',
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS client_photos (
+  id INTEGER PRIMARY KEY,
+  client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  filename TEXT DEFAULT '',
+  content_type TEXT DEFAULT 'image/jpeg',
+  data TEXT NOT NULL,                    -- base64 (resized in the browser first)
+  category TEXT DEFAULT 'other',
+  caption TEXT DEFAULT '',
+  size INTEGER DEFAULT 0,
+  uploaded_by TEXT DEFAULT '',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS ix_photos_client ON client_photos(client_id);
+
 INSERT OR IGNORE INTO agency (id, name) VALUES (1, 'Your Agency');
 """
 

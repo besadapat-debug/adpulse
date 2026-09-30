@@ -36,6 +36,8 @@ def default_tasks(health: bool) -> list[dict]:
     plan = [
         (1, "Get Manager access to their Google Business Profile", "Owner: business.google.com → Business Profile settings → People and access → Add → your email → Manager."),
         (1, "Record the 'before' numbers", "Fill in the Before column below: reviews, rating, photos, posts and the profile checklist."),
+        (1, "Ask the owner to fill in 'Business details & photos'", "Give them their own AdPulse login (Client settings → Client login). They add hours, services, "
+                                                                      "a short description and photos, and tick the access boxes. Download everything as a zip from that tab."),
         (1, "Agree one goal for the week", "e.g. more flu vaccination bookings, more new customers, more reviews. Write it in the Goal box."),
         (2, "Fix the basics on Google", "Check name, address, phone and hours (add upcoming public-holiday hours)."),
         (2, "Set the right categories and services", "Main category plus extra categories; list the services people search for (e.g. vaccinations, blister packs, script refills)."),
