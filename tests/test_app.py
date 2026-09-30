@@ -503,3 +503,32 @@ def test_find_local_competitors(client, monkeypatch):
     assert s["search_term"] == "pharmacy" and "pharmacy+near+East+Bentleigh+VIC" in s["maps_link"]
     aug = next(x for x in s["series"] if x["month"] == "2026-08")
     assert aug["reviews_total"] == 30
+
+
+def test_seven_day_trial(client):
+    cid = _cid(client)
+    assert client.get(f"/api/clients/{cid}/trial").json()["started"] is False
+    t = client.post(f"/api/clients/{cid}/trial/start", json={"start_date": "2026-09-01"}).json()
+    assert t["started"] and t["total"] >= 14 and t["day"] == 7 and t["end_date"] == "2026-09-07"
+    first = t["tasks"][0]["id"]
+    t = client.put(f"/api/clients/{cid}/trial", json={
+        "goal": "More flu shot bookings",
+        "baseline": {"reviews_total": 12, "rating": 4.1, "photos": 3}, "after": {"reviews_total": 19, "rating": 4.3, "photos": 17},
+        "checks_before": {"hours": True, "website_phone": True}, "checks_after": {k: True for k in ["hours", "categories", "services", "description", "booking", "website_phone", "photos10", "posted"]},
+        "tasks": [{"id": first, "done": True, "note": "Added as Manager"}, {"new": True, "title": "Flu shot landing page", "day": 5}]}).json()
+    assert t["done"] == 1 and t["completeness_before"] == 25 and t["completeness_after"] == 100
+    assert any(x["title"] == "Flu shot landing page" and x["day"] == 5 for x in t["tasks"])
+    page = client.get(f"/clients/{cid}/trial-report").text
+    assert "7 new Google reviews" in page and "25% to 100% complete" in page and "Added as Manager" in page and "Local Lite" in page
+    url = client.post(f"/api/clients/{cid}/trial-link").json()["url"]
+    with TestClient(app) as anon:
+        assert "7 new Google reviews" in anon.get("/t/" + url.split("/t/")[1]).text
+    client.put(f"/api/clients/{cid}/trial", json={"show_price": False})
+    assert 'class="noprice"' in client.get(f"/clients/{cid}/trial-report").text
+    # a client login can see the trial and the report, not change them
+    client.post(f"/api/clients/{cid}/logins", json={"email": "trial@harbour.example", "password": "harbour123"})
+    with TestClient(app) as c:
+        c.post("/login", data={"email": "trial@harbour.example", "password": "harbour123"})
+        assert c.get(f"/api/clients/{cid}/trial").json()["done"] == 1
+        assert c.get(f"/clients/{cid}/trial-report").status_code == 200
+        assert c.put(f"/api/clients/{cid}/trial", json={"goal": "x"}).status_code == 403

@@ -63,8 +63,8 @@ def current_user(request: Request) -> dict | None:
 
 
 # A client login can only read its own business: these pages/endpoints, GET only, and only for users.client_id.
-CLIENT_PATHS = re.compile(r"^/(?:$|logout$|clients/(?P<a>\d+)(?:/monthly)?$|api/platforms$|"
-                          r"api/clients/(?P<b>\d+)(?:/(?:performance|engagement|organic|seo|email|audience|local|monthly))?$)")
+CLIENT_PATHS = re.compile(r"^/(?:$|logout$|clients/(?P<a>\d+)(?:/monthly|/trial-report)?$|api/platforms$|"
+                          r"api/clients/(?P<b>\d+)(?:/(?:performance|engagement|organic|seo|email|audience|local|monthly|trial))?$)")
 
 
 def require_user(request: Request) -> dict:
@@ -663,6 +663,70 @@ def monthly_shared(request: Request, token: str):
     if not data or "monthly" not in data:
         raise HTTPException(404, "Report link invalid or expired")
     return _monthly_page(request, data["monthly"], data.get("month") or "", True)
+
+
+def _is_health(c: dict) -> bool:
+    from .services import social as social_svc
+    ind = (c.get("industry") or "").lower()
+    name = (c.get("name") or "").lower()
+    return social_svc.INDUSTRIES.get(ind, {}).get("health", False) or any(w in name for w in ("pharm", "chemist", "dental", "physio", "clinic", "medical", "health"))
+
+
+@app.get("/api/clients/{cid}/trial")
+def get_trial(cid: int, user=Depends(require_user)):
+    from .services import trial
+    _client(cid)
+    return trial.get(cid)
+
+
+@app.post("/api/clients/{cid}/trial/start")
+async def start_trial(cid: int, request: Request, user=Depends(require_editor)):
+    from .services import trial
+    c = _client(cid)
+    body = await request.json() if (await request.body()) else {}
+    try:
+        return trial.start(cid, _is_health(c), body.get("start_date") or None)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.put("/api/clients/{cid}/trial")
+async def put_trial(cid: int, request: Request, user=Depends(require_editor)):
+    from .services import trial
+    _client(cid)
+    try:
+        return trial.update(cid, await request.json())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+def _trial_page(request: Request, cid: int, shared: bool):
+    from .services import trial
+    rep = trial.report(cid)
+    if not rep["started"]:
+        raise HTTPException(404, "No trial started for this client")
+    return templates.TemplateResponse(request, "trial_report.html", {"request": request, "r": rep, "c": rep["client"], "shared": shared,
+                                                                      "agency": db.one("SELECT * FROM agency WHERE id=1")})
+
+
+@app.get("/clients/{cid}/trial-report", response_class=HTMLResponse)
+def trial_report_page(request: Request, cid: int, user=Depends(require_user)):
+    _client(cid)
+    return _trial_page(request, cid, False)
+
+
+@app.post("/api/clients/{cid}/trial-link")
+def trial_link(cid: int, user=Depends(require_editor)):
+    _client(cid)
+    return {"url": f"{settings.BASE_URL}/t/{sign({'trial': cid}, 60 * 86400)}"}
+
+
+@app.get("/t/{token}", response_class=HTMLResponse)
+def trial_shared(request: Request, token: str):
+    data = unsign(token)
+    if not data or "trial" not in data:
+        raise HTTPException(404, "Report link invalid or expired")
+    return _trial_page(request, data["trial"], True)
 
 
 @app.get("/api/clients/{cid}/logins")

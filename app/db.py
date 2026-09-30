@@ -316,6 +316,20 @@ CREATE TABLE IF NOT EXISTS imports (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+-- One 7-day trial per client: day-by-day tasks, before/after snapshot, end-of-trial report.
+CREATE TABLE IF NOT EXISTS trials (
+  client_id INTEGER PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE,
+  start_date TEXT NOT NULL,
+  goal TEXT DEFAULT '',
+  baseline TEXT DEFAULT '{}',
+  after TEXT DEFAULT '{}',
+  checks_before TEXT DEFAULT '{}',
+  checks_after TEXT DEFAULT '{}',
+  tasks TEXT DEFAULT '[]',
+  show_price INTEGER DEFAULT 1,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 INSERT OR IGNORE INTO agency (id, name) VALUES (1, 'Your Agency');
 """
 

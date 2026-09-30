@@ -2,7 +2,7 @@
 currency = CLIENT.currency || 'AUD';
 let days = 30;
 const view = $('#view');
-const TABS = ['monthly', 'local', 'performance', 'engagement', 'audience', 'organic', 'seo', 'email', 'attribution', 'people', 'companies', 'audiences', 'budget', 'alerts', 'upload', 'connections', 'settings'];
+const TABS = ['monthly', 'trial', 'local', 'performance', 'engagement', 'audience', 'organic', 'seo', 'email', 'attribution', 'people', 'companies', 'audiences', 'budget', 'alerts', 'upload', 'connections', 'settings'];
 let base = `/api/clients/${CLIENT.id}`;
 function setClient(c) { Object.keys(CLIENT).forEach(k => delete CLIENT[k]); Object.assign(CLIENT, c); base = `/api/clients/${c.id}`; currency = c.currency || 'AUD'; }
 
@@ -497,6 +497,76 @@ R.monthly = async () => {
   const sh = $('#repShare');
   if (sh) sh.onclick = async () => { const r = await api(`${base}/monthly-link?month=${d.month}`, { method: 'POST' });
     try { await navigator.clipboard.writeText(r.url); toast('Link copied (works for 120 days). Paste it into an email or text to the owner.', 6000); } catch { prompt('Report link:', r.url); } };
+};
+
+
+/* ---------------- 7-day trial ---------------- */
+R.trial = async () => {
+  const t = await api(`${base}/trial`);
+  setPeriod(null); $('#periodLabel').textContent = '7-day trial';
+  const ro = IS_CLIENT ? 'disabled' : '';
+  if (!t.started) {
+    view.innerHTML = `<div class="card"><h2>7-day trial</h2>
+      ${IS_CLIENT ? '<div class="empty">No trial running.</div>' : `
+      <p>A ready-made plan for a one-week trial: what to do each day, a before/after snapshot, and a one-page results report to show the owner on day 7.</p>
+      <p class="small muted">It focuses on things that visibly change in a week: a complete Google profile, new photos and posts, a review system bringing in new reviews, and website quick wins. Sales and calls build over the weeks after.</p>
+      <div class="row" style="gap:8px;align-items:flex-end;margin-top:10px"><label class="f">Trial starts<input type="date" id="tStart" value="${new Date().toISOString().slice(0, 10)}"></label>
+        <button class="btn primary" id="tGo">Start 7-day trial</button></div>`}</div>`;
+    const go = $('#tGo'); if (go) go.onclick = async () => { await api(`${base}/trial/start`, { json: { start_date: $('#tStart').value } }); toast('Trial started'); route(); };
+    return;
+  }
+  const pct = Math.round(100 * t.done / t.total);
+  const days = [1, 2, 3, 4, 5, 6, 7];
+  const DAY_TITLE = { 1: 'Set up & measure', 2: 'Fix the Google profile', 3: 'Photos & first post', 4: 'Reviews system', 5: 'Website quick wins', 6: 'Second post & FAQs', 7: 'Measure & report' };
+  view.innerHTML = `
+    <div class="card"><div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap">
+      <div><h2 style="margin:0">Day ${t.day} of 7 <span class="small muted">· ${t.start_date} → ${t.end_date}</span></h2>
+        <div class="row" style="gap:8px;margin-top:6px"><div class="bar-track" style="width:220px"><div class="bar-fill" style="width:${pct}%;background:${cssVar('--good')}"></div></div><span class="small">${t.done} of ${t.total} tasks done</span></div></div>
+      <div class="row" style="gap:8px;flex-wrap:wrap"><a class="btn primary" href="/clients/${CLIENT.id}/trial-report" target="_blank" rel="noopener">📄 End-of-trial report</a>
+        ${IS_CLIENT ? '' : '<button class="btn" id="tLink">Copy report link</button><button class="btn ghost" id="tRestart">Restart</button>'}</div></div>
+      <label class="f" style="margin-top:12px">Goal for the week<input id="tGoal" value="${fmt.esc(t.goal || '')}" placeholder="e.g. more flu vaccination bookings and new Google reviews" ${ro}></label></div>
+
+    <div class="grid g2" style="margin-top:14px">
+      <div class="card"><h2>Before &amp; after numbers</h2>
+        <p class="small muted">Fill in <b>Day 1</b> now and <b>Day 7</b> at the end. Reviews, rating and photos are on their Google Maps listing; posts, calls and directions are in their Google Business Profile → Performance (needs Manager access). Leave blank what you can't see.</p>
+        <table class="snap"><thead><tr><th></th><th class="r">Day 1</th><th class="r">Day 7</th></tr></thead><tbody>
+          ${t.fields.map(([k, l]) => `<tr><td>${l}</td><td class="r"><input data-s="baseline" data-k="${k}" type="number" step="${k === 'rating' ? '0.1' : '1'}" min="0" value="${t.baseline[k] ?? ''}" ${ro}></td>
+            <td class="r"><input data-s="after" data-k="${k}" type="number" step="${k === 'rating' ? '0.1' : '1'}" min="0" value="${t.after[k] ?? ''}" ${ro}></td></tr>`).join('')}
+        </tbody></table></div>
+      <div class="card"><h2>Google profile checklist</h2>
+        <p class="small muted">Tick what's already done on day 1, then again on day 7. The report shows the % complete before and after.</p>
+        <table class="snap"><thead><tr><th></th><th class="r">Day 1</th><th class="r">Day 7</th></tr></thead><tbody>
+          ${t.profile_checks.map(([k, l]) => `<tr><td>${l}</td><td class="r"><input type="checkbox" data-c="checks_before" data-k="${k}" ${t.checks_before[k] ? 'checked' : ''} ${ro}></td>
+            <td class="r"><input type="checkbox" data-c="checks_after" data-k="${k}" ${t.checks_after[k] ? 'checked' : ''} ${ro}></td></tr>`).join('')}
+          <tr><td><b>Complete</b></td><td class="r"><b>${t.completeness_before ?? '–'}${t.completeness_before != null ? '%' : ''}</b></td><td class="r"><b>${t.completeness_after ?? '–'}${t.completeness_after != null ? '%' : ''}</b></td></tr>
+        </tbody></table></div>
+    </div>
+    ${IS_CLIENT ? '' : '<div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn primary" id="tSave">Save numbers</button></div>'}
+
+    <div class="card" style="margin-top:14px"><h2>Day-by-day plan</h2>
+      ${days.map(d => `<div class="tday ${d === t.day ? 'today' : ''}"><div class="tdh">Day ${d} · ${DAY_TITLE[d]} ${d === t.day ? '<span class="badge accent">today</span>' : ''}</div>
+        ${t.tasks.filter(x => x.day === d).map(x => `<div class="ttask ${x.done ? 'done' : ''}"><label class="row" style="gap:10px;align-items:flex-start;flex-wrap:nowrap">
+          <input type="checkbox" data-task="${x.id}" ${x.done ? 'checked' : ''} ${ro} style="margin-top:3px"><span><b>${fmt.esc(x.title)}</b>${x.help ? `<div class="small muted">${fmt.esc(x.help)}</div>` : ''}</span></label>
+          ${IS_CLIENT ? (x.note ? `<div class="small" style="margin-left:26px">${fmt.esc(x.note)}</div>` : '') : `<input class="tnote" data-note="${x.id}" value="${fmt.esc(x.note || '')}" placeholder="Note (optional), e.g. uploaded 14 photos">`}</div>`).join('')}</div>`).join('')}
+      ${IS_CLIENT ? '' : `<form id="tAdd" class="row" style="gap:8px;margin-top:10px;align-items:flex-end"><label class="f" style="flex:1">Add your own task<input name="title" required placeholder="e.g. Set up a flu-shot booking page"></label>
+        <label class="f">Day<select name="day">${days.map(d => `<option ${d === t.day ? 'selected' : ''}>${d}</option>`).join('')}</select></label><button class="btn">Add</button></form>`}
+    </div>`;
+  if (IS_CLIENT) return;
+  const put = (body, msg) => api(`${base}/trial`, { method: 'PUT', json: body }).then(() => { if (msg) toast(msg); });
+  $$('[data-task]').forEach(cb => cb.onchange = async () => { await put({ tasks: [{ id: cb.dataset.task, done: cb.checked, note: $(`[data-note="${cb.dataset.task}"]`).value }] }); route(); });
+  $$('[data-note]').forEach(inp => inp.onchange = () => put({ tasks: [{ id: inp.dataset.note, done: $(`[data-task="${inp.dataset.note}"]`).checked, note: inp.value }] }, 'Note saved'));
+  $('#tGoal').onchange = e => put({ goal: e.target.value }, 'Goal saved');
+  $('#tSave').onclick = async () => {
+    const body = { baseline: {}, after: {}, checks_before: {}, checks_after: {} };
+    $$('[data-s]').forEach(i => { body[i.dataset.s][i.dataset.k] = i.value; });
+    $$('[data-c]').forEach(i => { body[i.dataset.c][i.dataset.k] = i.checked; });
+    try { await put(body, 'Saved'); route(); } catch (e) { toast(e.message); }
+  };
+  $$('[data-c]').forEach(i => i.onchange = () => $('#tSave').click());
+  $('#tAdd').onsubmit = async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); await put({ tasks: [{ new: true, title: f.title, day: +f.day }] }, 'Task added'); route(); };
+  $('#tLink').onclick = async () => { const r = await api(`${base}/trial-link`, { method: 'POST' });
+    try { await navigator.clipboard.writeText(r.url); toast('Report link copied: paste it into a text or email to the owner', 6000); } catch { prompt('Report link:', r.url); } };
+  $('#tRestart').onclick = async () => { if (!confirm('Start the trial again from scratch? All ticks and numbers are cleared.')) return; await api(`${base}/trial/start`, { json: {} }); route(); };
 };
 
 /* ---------------- Google Maps & reviews ---------------- */
