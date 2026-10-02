@@ -2,6 +2,7 @@
 developer app; credentials come from environment variables (see .env.example)."""
 from __future__ import annotations
 
+import os
 import time
 from urllib.parse import urlencode
 
@@ -28,7 +29,9 @@ PROVIDERS = {
         "token": f"https://graph.facebook.com/{settings.META_API_VERSION}/oauth/access_token",
         "client_id": lambda: settings.META_APP_ID,
         "client_secret": lambda: settings.META_APP_SECRET,
-        "scope": "ads_read,ads_management,business_management,read_insights,instagram_basic,instagram_manage_insights,pages_read_engagement",
+        # Only what ads reporting and campaign creation need; asking for permissions the app hasn't added makes Meta's login fail.
+        # Override with META_SCOPES, or set META_CONFIG_ID to use a "Facebook Login for Business" configuration instead.
+        "scope": os.getenv("META_SCOPES", "ads_read,ads_management,business_management,pages_show_list,pages_read_engagement"),
         "extra": {},
     },
     "tiktok": {
@@ -73,7 +76,9 @@ def authorize_url(provider: str, state: str) -> str:
     if provider == "tiktok":
         return p["authorize"] + "?" + urlencode({"app_id": p["client_id"](), "state": state, "redirect_uri": redirect_uri(provider)})
     q = {"client_id": p["client_id"](), "redirect_uri": redirect_uri(provider), "response_type": "code", "state": state}
-    if p["scope"]:
+    if provider == "meta" and os.getenv("META_CONFIG_ID"):
+        q["config_id"] = os.getenv("META_CONFIG_ID")      # Facebook Login for Business: permissions come from the configuration
+    elif p["scope"]:
         q["scope"] = p["scope"]
     q.update(p["extra"])
     return p["authorize"] + "?" + urlencode(q)

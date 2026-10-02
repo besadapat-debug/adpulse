@@ -691,3 +691,14 @@ def test_campaign_send_google_and_meta(client, monkeypatch):
     assert '"radius": 5' in adset_call["data"]["targeting"] or '"countries"' in adset_call["data"]["targeting"]
     assert client.delete(f"/api/clients/{cid}/campaigns/{m['id']}").status_code == 200
     assert any(c["id"] == m["id"] for c in client.get(f"/api/clients/{cid}/campaigns").json()["campaigns"])   # sent campaigns can't be deleted
+
+
+def test_meta_login_url(monkeypatch):
+    from app import oauth
+    from app.config import settings
+    monkeypatch.setattr(settings, "META_APP_ID", "123")
+    u = oauth.authorize_url("meta", "st")
+    assert "scope=ads_read%2Cads_management" in u and "instagram" not in u and "config_id" not in u
+    monkeypatch.setenv("META_CONFIG_ID", "999")
+    u = oauth.authorize_url("meta", "st")
+    assert "config_id=999" in u and "scope=" not in u

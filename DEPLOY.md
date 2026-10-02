@@ -112,6 +112,26 @@ a few cents per review, paid to Anthropic.
 
 Never paste the key into a chat or email. If it ever leaks, delete it in the console and make a new one.
 
+## Step 8: Connect Meta (Facebook & Instagram ads)
+
+1. Go to **developers.facebook.com** → **My Apps** → **Create app**. Name it `AdPulse`, use your business email.
+   When asked what the app is for, choose **Other**, then app type **Business**, and connect your Meta Business portfolio.
+2. On the app dashboard, add the products **Marketing API** and **Facebook Login for Business**.
+3. **Facebook Login for Business → Settings** → **Valid OAuth Redirect URIs**: `https://adpulse-dsv4.onrender.com/oauth/meta/callback` → Save.
+   (If Meta asks you to create a *Configuration* instead, create one of type **User access token** with the permissions
+   ads_read, ads_management, business_management, pages_show_list, pages_read_engagement, and copy its **Configuration ID**.)
+4. **App settings → Basic**: App domains `adpulse-dsv4.onrender.com`, Privacy policy URL (your website's privacy page),
+   category Business. Save. Copy the **App ID** and **App secret** (click Show).
+5. In **Render → adpulse → Environment** add `META_APP_ID` and `META_APP_SECRET` (and `META_CONFIG_ID` if you made one).
+   Save, rebuild and deploy.
+6. In AdPulse open the client → **Connections → Meta Ads**, type their ad account number (digits after `act=` in Ads Manager's
+   address bar), untick **Use demo data**, click **Connect**, and log in with the Facebook account that has access to their ad account
+   (through your Business portfolio's partner access).
+
+While the app is in development mode, only people with a role on the app (you) can connect, which is all you need, as long as
+your Facebook account has partner access to each client's ad account. Before other people log in through it, Meta needs App Review
+and Business Verification.
+
 ## Good to know
 
 - **Updates:** when you get a new version of AdPulse, upload the changed files to GitHub the same way.
