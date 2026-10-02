@@ -351,6 +351,22 @@ CREATE TABLE IF NOT EXISTS client_photos (
 );
 CREATE INDEX IF NOT EXISTS ix_photos_client ON client_photos(client_id);
 
+-- Ad campaigns written in AdPulse (Google Search / Meta), then exported or sent to the client's ad account (paused).
+CREATE TABLE IF NOT EXISTS campaigns (
+  id INTEGER PRIMARY KEY,
+  client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  platform TEXT NOT NULL,                -- google | meta
+  name TEXT DEFAULT '',
+  status TEXT DEFAULT 'draft',           -- draft | awaiting_approval | approved | changes_requested | exported | sent | live | paused
+  data TEXT DEFAULT '{}',
+  remote TEXT DEFAULT '{}',              -- ids in the ad platform after sending
+  owner_note TEXT DEFAULT '',
+  created_by TEXT DEFAULT '',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS ix_campaigns_client ON campaigns(client_id);
+
 INSERT OR IGNORE INTO agency (id, name) VALUES (1, 'Your Agency');
 """
 
@@ -385,7 +401,7 @@ IS_PG = bool(settings.DATABASE_URL)
 
 # tables with an auto "id" column: INSERTs into these get RETURNING id on Postgres
 _ID_TABLES = {"users", "clients", "connections", "alert_rules", "alerts", "contacts", "events", "audiences",
-              "audience_syncs", "sync_log", "audit_log", "companies", "prospects"}
+              "audience_syncs", "sync_log", "audit_log", "companies", "prospects", "campaigns", "imports", "client_photos"}
 
 
 def _pg_schema() -> str:

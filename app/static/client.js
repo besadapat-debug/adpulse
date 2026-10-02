@@ -2,7 +2,7 @@
 currency = CLIENT.currency || 'AUD';
 let days = 30;
 const view = $('#view');
-const TABS = ['monthly', 'trial', 'details', 'local', 'performance', 'engagement', 'audience', 'organic', 'seo', 'email', 'attribution', 'people', 'companies', 'audiences', 'budget', 'alerts', 'upload', 'connections', 'settings'];
+const TABS = ['monthly', 'trial', 'details', 'campaigns', 'local', 'performance', 'engagement', 'audience', 'organic', 'seo', 'email', 'attribution', 'people', 'companies', 'audiences', 'budget', 'alerts', 'upload', 'connections', 'settings'];
 let base = `/api/clients/${CLIENT.id}`;
 function setClient(c) { Object.keys(CLIENT).forEach(k => delete CLIENT[k]); Object.assign(CLIENT, c); base = `/api/clients/${c.id}`; currency = c.currency || 'AUD'; }
 
@@ -563,6 +563,149 @@ R.details = async () => {
     toast(`${ok} photo${ok === 1 ? '' : 's'} uploaded`); route();
   };
 };
+
+
+/* ---------------- campaigns: build Google / Meta ads in AdPulse ---------------- */
+let campId = null;
+const STATUS_BADGE = { draft: '', awaiting_approval: 'warn', approved: 'good', changes_requested: 'bad', exported: 'accent', sent: 'accent', live: 'good', paused: '' };
+R.campaigns = async () => {
+  const L = await api(`${base}/campaigns`);
+  setPeriod(null); $('#periodLabel').textContent = 'Campaigns: write, check and launch ads';
+  if (campId && !L.campaigns.some(c => c.id === campId)) campId = null;
+  view.innerHTML = `<div class="camp-layout">
+    <div class="card camp-list"><h2>Campaigns</h2>
+      ${L.campaigns.map(c => `<a href="#" class="camp-item ${c.id === campId ? 'on' : ''}" data-open="${c.id}">
+        <div class="row" style="justify-content:space-between;gap:6px"><b>${fmt.esc(c.name)}</b><span class="small muted">${c.platform === 'google' ? 'Google' : 'Meta'}</span></div>
+        <div class="row" style="justify-content:space-between;gap:6px;margin-top:3px"><span class="badge ${STATUS_BADGE[c.status] || ''}">${fmt.esc(c.status_label)}</span>
+        <span class="small muted">${c.monthly_budget ? fmt.money(c.monthly_budget) + '/mo' : ''}</span></div></a>`).join('') || '<div class="small muted">No campaigns yet.</div>'}
+      ${IS_CLIENT ? '' : `<div class="newcamp"><h3>New campaign</h3>
+        <div class="seg" id="ncPlat"><button data-p="google" class="on">Google Search</button><button data-p="meta">Facebook &amp; Instagram</button></div>
+        <label class="f" style="margin-top:8px">What to advertise<input id="ncService" list="ncServices" placeholder="e.g. Flu vaccinations"><datalist id="ncServices">${L.services.map(x => `<option value="${fmt.esc(x)}">`).join('')}</datalist></label>
+        <div class="row" style="gap:8px"><label class="f" style="flex:1">Monthly ad spend ($)<input id="ncBudget" type="number" min="0" step="50" value="600"></label>
+          <label class="f" style="width:100px">Radius (km)<input id="ncRadius" type="number" min="1" max="80" value="5"></label></div>
+        <button class="btn primary" id="ncGo" style="margin-top:8px;width:100%">Write the campaign</button>
+        <p class="small muted" style="margin-top:6px">AdPulse writes a first version from their Business details. You can change everything.</p></div>`}
+    </div>
+    <div id="campEditor">${campId ? '<div class="empty">Loading…</div>' : `<div class="card"><div class="empty">${IS_CLIENT ? 'Pick a campaign to see the ad.' : 'Pick a campaign, or write a new one on the left.'}</div>
+      ${IS_CLIENT ? '' : `<div class="small muted" style="padding:0 16px 16px">How it works: <b>1</b> write the campaign → <b>2</b> fix anything in red → <b>3</b> ask the owner to approve → <b>4</b> launch it: download the Google Ads Editor file, use the Meta copy kit, or send it straight to their ad account once connected (it arrives paused).</div>`}</div>`}</div>
+  </div>`;
+  $$('[data-open]').forEach(a => a.onclick = e => { e.preventDefault(); campId = +a.dataset.open; R.campaigns(); });
+  const plat = { v: 'google' };
+  $$('#ncPlat button').forEach(b => b.onclick = () => { plat.v = b.dataset.p; $$('#ncPlat button').forEach(x => x.classList.toggle('on', x === b)); });
+  const go = $('#ncGo');
+  if (go) go.onclick = async () => {
+    go.disabled = true;
+    try { const c = await api(`${base}/campaigns`, { json: { platform: plat.v, service: $('#ncService').value, monthly_budget: +$('#ncBudget').value, radius_km: +$('#ncRadius').value } });
+      campId = c.id; toast('Campaign written. Check it over.'); R.campaigns(); }
+    catch (e) { toast(e.message, 6000); go.disabled = false; }
+  };
+  if (campId) renderCampaign(await api(`${base}/campaigns/${campId}`), L);
+};
+
+function counter(v, max) { const n = (v || '').length; return `<span class="cc ${n > max ? 'over' : ''}">${n}/${max}</span>`; }
+function renderCampaign(c, L) {
+  const d = c.data, g = c.platform === 'google', ro = IS_CLIENT || ['sent', 'live', 'paused'].includes(c.status) ? 'disabled' : '';
+  const errs = c.checks.filter(x => x.level === 'error'), warns = c.checks.filter(x => x.level === 'warn'), info = c.checks.filter(x => x.level === 'info');
+  const daily = (d.monthly_budget || 0) / 30.4;
+  const photoUrl = d.photo_id ? `${base}/photos/${d.photo_id}` : '';
+  const host = (d.final_url || '').replace(/^https?:\/\//, '').split('/')[0];
+  const preview = g ? `<div class="gad"><div class="small"><b>Sponsored</b></div><div class="gurl">${fmt.esc(host)}${d.path1 ? ' › ' + fmt.esc(d.path1) : ''}${d.path2 ? ' › ' + fmt.esc(d.path2) : ''}</div>
+      <div class="ghead">${(d.headlines || []).slice(0, 3).map(fmt.esc).join(' | ')}</div><div class="gdesc">${fmt.esc((d.descriptions || [])[0] || '')} ${fmt.esc((d.descriptions || [])[1] || '')}</div></div>
+      <p class="small muted">One of many combinations: Google mixes your headlines and descriptions to find what works best.</p>`
+    : `<div class="mad"><div class="mhead"><span class="mark-sm">${fmt.esc((CLIENT.name || 'A')[0])}</span><div><b>${fmt.esc(CLIENT.name)}</b><div class="small muted">Sponsored</div></div></div>
+      <div class="mtext">${fmt.esc(d.primary_text || '')}</div>${photoUrl ? `<img src="${photoUrl}" alt="">` : '<div class="mnoimg">Pick a photo</div>'}
+      <div class="mfoot"><div><div class="small muted">${fmt.esc(host.toUpperCase())}</div><b>${fmt.esc(d.headline || '')}</b><div class="small">${fmt.esc(d.description || '')}</div></div>
+      <span class="btn sm">${fmt.esc(L.ctas[d.cta] || 'Learn more')}</span></div></div>`;
+  const list = (arr, key, max, n) => Array.from({ length: n }, (_, i) => arr[i] || '').map((v, i) => `<div class="li-in"><input data-list="${key}" data-i="${i}" value="${fmt.esc(v)}" ${ro} placeholder="${i < (key === 'headlines' ? 3 : 2) ? 'Required' : 'Optional'}">${counter(v, max)}</div>`).join('');
+  const fields = g ? `
+      <label class="f">Campaign name<input data-k="name" value="${fmt.esc(d.name || '')}" ${ro}></label>
+      <label class="f">Landing page (where the ad goes)<input data-k="final_url" value="${fmt.esc(d.final_url || '')}" placeholder="https://…/book" ${ro}></label>
+      <div class="row" style="gap:8px"><label class="f" style="flex:1">Show ads to people near<input data-k="location" value="${fmt.esc(d.location || '')}" placeholder="Shop address or suburb" ${ro}></label>
+        <label class="f" style="width:110px">Radius (km)<input data-k="radius_km" type="number" min="1" max="80" value="${d.radius_km || 5}" ${ro}></label>
+        <label class="f" style="width:150px">Monthly spend ($)<input data-k="monthly_budget" type="number" min="0" step="50" value="${d.monthly_budget || 0}" ${ro}></label></div>
+      <div class="small muted">≈ ${fmt.money(daily)} a day. Paid to Google from their card, not part of your fee.</div>
+      <h3>Headlines <span class="small muted">(3–15, max 30 characters each)</span></h3>${list(d.headlines || [], 'headlines', 30, 15)}
+      <h3>Descriptions <span class="small muted">(2–4, max 90 characters)</span></h3>${list(d.descriptions || [], 'descriptions', 90, 4)}
+      <div class="row" style="gap:8px"><label class="f" style="flex:1">Web address path 1<input data-k="path1" value="${fmt.esc(d.path1 || '')}" ${ro}></label><label class="f" style="flex:1">Path 2<input data-k="path2" value="${fmt.esc(d.path2 || '')}" ${ro}></label></div>
+      <div class="row" style="gap:8px;align-items:flex-start"><label class="f" style="flex:1">Keywords (one per line)<textarea data-lines="keywords" rows="6" ${ro}>${fmt.esc((d.keywords || []).join('\n'))}</textarea></label>
+        <label class="f" style="flex:1">Don't show for (negative keywords)<textarea data-lines="negatives" rows="6" ${ro}>${fmt.esc((d.negatives || []).join('\n'))}</textarea></label></div>
+      <label class="f" style="width:240px">Keyword match<select data-k="match" ${ro}>${[['PHRASE', 'Phrase (recommended)'], ['EXACT', 'Exact'], ['BROAD', 'Broad']].map(([k, l]) => `<option value="${k}" ${k === d.match ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`
+    : `
+      <label class="f">Campaign name<input data-k="name" value="${fmt.esc(d.name || '')}" ${ro}></label>
+      <label class="f">Goal<select data-k="objective" ${ro}>${Object.entries(L.objectives).map(([k, l]) => `<option value="${k}" ${k === d.objective ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label class="f">Landing page<input data-k="final_url" value="${fmt.esc(d.final_url || '')}" placeholder="https://…" ${ro}></label>
+      <div class="row" style="gap:8px"><label class="f" style="flex:1">Show to people near<input data-k="location" value="${fmt.esc(d.location || '')}" ${ro}></label>
+        <label class="f" style="width:100px">Radius (km)<input data-k="radius_km" type="number" min="1" max="80" value="${d.radius_km || 5}" ${ro}></label></div>
+      <div class="row" style="gap:8px"><label class="f" style="width:100px">Age from<input data-k="age_min" type="number" min="18" max="65" value="${d.age_min || 18}" ${ro}></label>
+        <label class="f" style="width:100px">to<input data-k="age_max" type="number" min="18" max="65" value="${d.age_max || 65}" ${ro}></label>
+        <label class="f" style="width:150px">Monthly spend ($)<input data-k="monthly_budget" type="number" min="0" step="50" value="${d.monthly_budget || 0}" ${ro}></label></div>
+      <div class="small muted">≈ ${fmt.money(daily)} a day, paid to Meta from their card.</div>
+      <label class="f">Main text ${counter(d.primary_text, 125)}<textarea data-k="primary_text" rows="3" ${ro}>${fmt.esc(d.primary_text || '')}</textarea></label>
+      <label class="f">Headline ${counter(d.headline, 40)}<input data-k="headline" value="${fmt.esc(d.headline || '')}" ${ro}></label>
+      <label class="f">Description (optional) ${counter(d.description, 30)}<input data-k="description" value="${fmt.esc(d.description || '')}" ${ro}></label>
+      <label class="f" style="width:220px">Button<select data-k="cta" ${ro}>${Object.entries(L.ctas).map(([k, l]) => `<option value="${k}" ${k === d.cta ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <h3>Photo</h3>${L.photos.length ? `<div class="pickph">${L.photos.map(p => `<label class="${p.id === d.photo_id ? 'on' : ''}"><input type="radio" name="ph" value="${p.id}" ${p.id === d.photo_id ? 'checked' : ''} ${ro} hidden><img src="${base}/photos/${p.id}" alt=""></label>`).join('')}</div>`
+        : `<div class="small muted">No photos yet. Ask the owner to add some in <a href="#details" onclick="return gotoTab('details')">Business details &amp; photos</a>.</div>`}
+      <label class="f" style="margin-top:8px">Facebook Page ID <span class="small muted">(only needed to send directly: their Page → About → Page transparency)</span><input data-k="page_id" value="${fmt.esc(d.page_id || '')}" ${ro}></label>`;
+  const kit = !g && !IS_CLIENT ? `<div class="card" style="margin-top:14px"><h2>Meta copy kit</h2>
+      <p class="small muted">In Meta Ads Manager click <b>+ Create</b>, choose <b>${fmt.esc(L.objectives[d.objective] || '')}</b> (“${d.objective === 'OUTCOME_AWARENESS' ? 'Awareness' : d.objective === 'OUTCOME_ENGAGEMENT' ? 'Engagement' : 'Traffic'}”), then copy each item below into the matching box, top to bottom.</p>
+      ${[['Campaign name', d.name], ['Daily budget', (daily).toFixed(2)], ['Location', `${d.location || ''} + ${d.radius_km || 5} km`], ['Age', `${d.age_min}–${d.age_max}`],
+         ['Website URL', d.final_url], ['Primary text', d.primary_text], ['Headline', d.headline], ['Description', d.description], ['Call to action', L.ctas[d.cta]]]
+        .map(([l, v]) => `<div class="kit"><span class="small muted">${l}</span><span class="kv">${fmt.esc(v || '')}</span><button class="btn sm" data-copy="${fmt.esc(v || '')}" type="button">Copy</button></div>`).join('')}
+      ${photoUrl ? `<div class="kit"><span class="small muted">Image</span><span class="kv">Chosen photo</span><a class="btn sm" href="${photoUrl}" download="ad-image.jpg">Download</a></div>` : ''}</div>` : '';
+  const actions = IS_CLIENT
+    ? (c.status === 'awaiting_approval' ? `<div class="approve"><b>Are you happy with this ad?</b><div class="row" style="gap:8px;margin-top:8px"><button class="btn primary" id="okBtn">✓ Approve</button>
+        <input id="okNote" placeholder="Or tell us what to change…" style="flex:1"><button class="btn" id="noBtn">Ask for changes</button></div></div>` : '')
+    : `<div class="row" style="gap:8px;flex-wrap:wrap">
+        ${!ro ? '<button class="btn primary" id="cSave">Save</button>' : ''}
+        ${['draft', 'changes_requested'].includes(c.status) ? '<button class="btn" id="cAsk">Ask owner to approve</button>' : ''}
+        ${g ? `<a class="btn" href="${base}/campaigns/${c.id}/google-ads-editor.csv">⬇ Google Ads Editor file</a>` : ''}
+        ${!['sent', 'live', 'paused'].includes(c.status) ? `<button class="btn" id="cSend" ${L.can_send[c.platform] ? '' : 'disabled title="Connect their ad account first (Connections tab)"'}>🚀 Send to ${g ? 'Google Ads' : 'Meta'} (paused)</button>` : ''}
+        ${['sent', 'paused'].includes(c.status) ? '<button class="btn primary" id="cOn">▶ Turn on</button>' : ''}${c.status === 'live' ? '<button class="btn" id="cOff">⏸ Pause</button>' : ''}
+        ${c.remote?.url ? `<a class="btn ghost" href="${fmt.esc(c.remote.url)}" target="_blank" rel="noopener">Open in ${g ? 'Google Ads' : 'Ads Manager'} ↗</a>` : ''}
+        ${!['sent', 'live', 'paused'].includes(c.status) ? '<button class="btn ghost" id="cDel">Delete</button>' : ''}</div>
+      ${!L.can_send[c.platform] && !['sent', 'live', 'paused'].includes(c.status) ? `<div class="small muted" style="margin-top:6px">${g ? 'To launch now: download the Google Ads Editor file, open Google Ads Editor → Account → Import → From file, check the changes, then Post. It arrives paused.' : 'To launch now: use the copy kit below in Meta Ads Manager.'} Direct sending switches on when their ${g ? 'Google Ads' : 'Meta ad'} account is connected (Connections tab).</div>` : ''}`;
+  $('#campEditor').innerHTML = `
+    <div class="card"><div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap"><div><h2 style="margin:0">${fmt.esc(c.name)}</h2>
+        <span class="badge ${STATUS_BADGE[c.status] || ''}">${fmt.esc(c.status_label)}</span> <span class="small muted">${g ? 'Google Search' : 'Facebook & Instagram'}</span></div></div>
+      ${c.owner_note ? `<div class="callout ${c.status === 'changes_requested' ? 'warn' : ''} small" style="margin-top:8px"><b>Owner's note:</b> ${fmt.esc(c.owner_note)}</div>` : ''}
+      <div style="margin-top:10px">${actions}</div></div>
+    <div class="grid g2" style="margin-top:14px">
+      <div class="card camp-fields">${IS_CLIENT ? `<h2>The ad</h2><div class="small">${g ? `<b>Headlines:</b> ${(d.headlines || []).map(fmt.esc).join(' · ')}<br><br><b>Descriptions:</b> ${(d.descriptions || []).map(fmt.esc).join(' · ')}` : ''}</div>
+          <div class="small muted" style="margin-top:8px">Shown to people within ${d.radius_km || 5} km of ${fmt.esc(d.location || 'the business')} · about ${fmt.money(daily)} a day.</div>` : fields}</div>
+      <div><div class="card"><h2>Preview</h2>${preview}</div>
+        <div class="card" style="margin-top:14px"><h2>Checks ${errs.length ? `<span class="badge bad">${errs.length} to fix</span>` : '<span class="badge good">✓ Ready</span>'}</h2>
+          ${[...errs, ...warns, ...info].map(x => `<div class="cchk ${x.level}"><b>${x.level === 'error' ? '✕' : x.level === 'warn' ? '!' : 'i'}</b><span>${fmt.esc(x.message)}</span></div>`).join('') || '<div class="small">No problems found.</div>'}</div>
+        ${kit}</div>
+    </div>`;
+  const reload = async () => R.campaigns();
+  $$('[data-copy]').forEach(b => b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.copy); toast('Copied'); } catch { toast('Select and copy it manually'); } });
+  if (IS_CLIENT) {
+    const ok = $('#okBtn'); if (!ok) return;
+    ok.onclick = async () => { await api(`${base}/campaigns/${c.id}/review`, { json: { approve: true, note: $('#okNote').value } }); toast('Thanks! Approved.'); reload(); };
+    $('#noBtn').onclick = async () => { if (!$('#okNote').value.trim()) return toast('Type what you\'d like changed'); await api(`${base}/campaigns/${c.id}/review`, { json: { approve: false, note: $('#okNote').value } }); toast('Sent to your agency'); reload(); };
+    return;
+  }
+  const collect = () => {
+    const b = {};
+    $$('#campEditor [data-k]').forEach(i => { b[i.dataset.k] = i.type === 'number' ? +i.value : i.value; });
+    ['headlines', 'descriptions'].forEach(k => { b[k] = $$(`#campEditor [data-list="${k}"]`).map(i => i.value).filter(x => x.trim()); });
+    $$('#campEditor [data-lines]').forEach(t => { b[t.dataset.lines] = t.value.split('\n').map(x => x.trim()).filter(Boolean); });
+    const ph = $('#campEditor input[name=ph]:checked'); if (ph) b.photo_id = +ph.value;
+    return b;
+  };
+  $$('#campEditor [data-list], #campEditor [data-k="primary_text"], #campEditor [data-k="headline"], #campEditor [data-k="description"]').forEach(i => i.oninput = () => {
+    const cc = i.parentElement.querySelector('.cc'); const max = +((cc?.textContent || '/0').split('/')[1]); if (cc) { cc.textContent = `${i.value.length}/${max}`; cc.classList.toggle('over', i.value.length > max); } });
+  $$('#campEditor .pickph label').forEach(l => l.onclick = () => { $$('#campEditor .pickph label').forEach(x => x.classList.remove('on')); l.classList.add('on'); });
+  const save = async (msg = 'Saved') => { const r = await api(`${base}/campaigns/${c.id}`, { method: 'PUT', json: collect() }); toast(msg); return r; };
+  const btn = (id, fn) => { const b = $(id); if (b) b.onclick = async () => { b.disabled = true; try { await fn(); } catch (e) { toast(e.message, 9000); } b.disabled = false; reload(); }; };
+  btn('#cSave', () => save());
+  btn('#cAsk', async () => { await save(); await api(`${base}/campaigns/${c.id}/ask-approval`, { method: 'POST' }); toast('Sent to the owner. They\'ll see it when they log in.', 6000); });
+  btn('#cSend', async () => { if (!confirm(`Create this campaign in their ${g ? 'Google Ads' : 'Meta'} account? It arrives PAUSED, so nothing spends until you turn it on.`)) return; await save(); await api(`${base}/campaigns/${c.id}/send`, { method: 'POST' }); toast('Created in their account (paused)', 6000); });
+  btn('#cOn', async () => { if (!confirm('Turn the ads on? Their card will start being charged for ad spend.')) return; await api(`${base}/campaigns/${c.id}/switch`, { json: { on: true } }); toast('Ads are running'); });
+  btn('#cOff', async () => { await api(`${base}/campaigns/${c.id}/switch`, { json: { on: false } }); toast('Paused'); });
+  btn('#cDel', async () => { if (!confirm('Delete this campaign draft?')) return; await api(`${base}/campaigns/${c.id}`, { method: 'DELETE' }); campId = null; });
+}
 
 /* ---------------- 7-day trial ---------------- */
 R.trial = async () => {

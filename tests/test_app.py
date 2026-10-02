@@ -586,3 +586,108 @@ def test_business_details_and_photos(client):
         assert c.get(f"/api/clients/{cid}/photos.zip").status_code == 403
         assert c.delete(f"/api/clients/{cid}/photos/{pid}").status_code == 200
     assert client.get(f"/api/clients/{cid}/details").json()["updated_by"] == "photos@harbour.example"
+
+
+def test_campaign_builder_google(client):
+    import csv as _csv, io
+    cid = _cid(client)
+    client.put(f"/api/clients/{cid}/details", json={"business_name": "East Bentleigh Pharmacy", "services": "Flu vaccinations\nWebster packs",
+                                                   "booking_link": "eastbentleighpharmacy.com.au/book", "address": "1 Centre Rd, Bentleigh East VIC 3165"})
+    client.patch(f"/api/clients/{cid}", json={"area": "Bentleigh East VIC", "search_term": "pharmacy"})
+    c = client.post(f"/api/clients/{cid}/campaigns", json={"platform": "google", "service": "Flu vaccinations", "monthly_budget": 900}).json()
+    d = c["data"]
+    assert 3 <= len(d["headlines"]) <= 15 and all(len(h) <= 30 for h in d["headlines"]) and all(len(x) <= 90 for x in d["descriptions"])
+    assert "flu vaccinations near me" in d["keywords"] and d["final_url"].startswith("https://") and "jobs" in d["negatives"]
+    assert not [x for x in c["checks"] if x["level"] == "error"], c["checks"]
+    # Ahpra / policy checks on bad copy
+    bad = client.put(f"/api/clients/{cid}/campaigns/{c['id']}", json={"headlines": d["headlines"][:2] + ["Best Pharmacy In Melbourne!", "Painless Flu Shots"],
+                                                                       "descriptions": d["descriptions"][:1] + ["Call 03 9555 1234. Our patients say we're great."]}).json()
+    msgs = " ".join(x["message"] for x in bad["checks"])
+    assert "best" in msgs and "exclamation" in msgs and "painless" in msgs.lower() and "Phone numbers" in msgs and "testimonials" in msgs
+    assert client.post(f"/api/clients/{cid}/campaigns/{c['id']}/ask-approval").status_code == 400      # red problems block approval
+    client.put(f"/api/clients/{cid}/campaigns/{c['id']}", json={"headlines": d["headlines"], "descriptions": d["descriptions"]})
+    assert client.post(f"/api/clients/{cid}/campaigns/{c['id']}/ask-approval").json()["status"] == "awaiting_approval"
+    # the owner approves from their own login
+    client.post(f"/api/clients/{cid}/logins", json={"email": "ads@harbour.example", "password": "harbour123"})
+    with TestClient(app) as o:
+        o.post("/login", data={"email": "ads@harbour.example", "password": "harbour123"})
+        assert o.get(f"/api/clients/{cid}/campaigns").status_code == 200
+        assert o.put(f"/api/clients/{cid}/campaigns/{c['id']}", json={"name": "x"}).status_code == 403
+        assert o.get(f"/api/clients/{cid}/campaigns/{c['id']}/google-ads-editor.csv").status_code == 403
+        r = o.post(f"/api/clients/{cid}/campaigns/{c['id']}/review", json={"approve": True, "note": "Looks good"}).json()
+        assert r["status"] == "approved" and r["owner_note"] == "Looks good"
+    # Google Ads Editor file
+    res = client.get(f"/api/clients/{cid}/campaigns/{c['id']}/google-ads-editor.csv")
+    rows = list(_csv.DictReader(io.StringIO(res.content.decode("utf-8-sig"))))
+    camp = rows[0]
+    assert camp["Campaign Type"] == "Search" and camp["Campaign Status"] == "Paused" and float(camp["Budget"]) == round(900 / 30.4, 2)
+    assert any(r["Location"].startswith("1 Centre Rd") and r["Radius"] == "5" for r in rows)
+    assert any(r["Keyword"] == "flu vaccinations near me" and r["Criterion Type"] == "Phrase" for r in rows)
+    assert any(r["Criterion Type"] == "Campaign negative phrase" for r in rows)
+    ad = next(r for r in rows if r["Ad type"] == "Responsive search ad")
+    assert ad["Headline 1"] == d["headlines"][0] and ad["Final URL"] == d["final_url"]
+    assert client.get(f"/api/clients/{cid}").json() and client.get(f"/api/clients/{cid}/campaigns").json()["campaigns"][0]["status"] == "exported"
+    # can't send without a connected Google Ads account
+    r = client.post(f"/api/clients/{cid}/campaigns/{c['id']}/send")
+    assert r.status_code == 400 and "Connect" in r.json()["detail"]
+
+
+def test_campaign_send_google_and_meta(client, monkeypatch):
+    import httpx
+    from app.security import encrypt_json
+    cid = _cid(client, "Planwise Software")
+    client.put(f"/api/clients/{cid}/details", json={"business_name": "Planwise", "services": "Project planning", "website": "https://planwise.example"})
+    db.execute("INSERT INTO connections (client_id, platform, account_id, account_name, credentials_enc, is_demo) VALUES (?,?,?,?,?,0)",
+               (cid, "google_ads", "123-456-7890", "live", encrypt_json({"access_token": "tok", "expires_at": 9999999999})))
+    db.execute("INSERT INTO connections (client_id, platform, account_id, account_name, credentials_enc, is_demo) VALUES (?,?,?,?,?,0)",
+               (cid, "meta_ads", "555", "live", encrypt_json({"access_token": "mtok"})))
+    calls = []
+
+    class R:
+        def __init__(self, body, code=200):
+            self.status_code, self._b, self.headers, self.text = code, body, {"content-type": "application/json"}, str(body)
+        def json(self):
+            return self._b
+
+    def fake_post(url, **kw):
+        calls.append((url, kw))
+        if "googleAds:mutate" in url:
+            ops = kw["json"]["mutateOperations"]
+            assert ops[1]["campaignOperation"]["create"]["status"] == "PAUSED"
+            return R({"mutateOperationResponses": [{"campaignBudgetResult": {}}, {"campaignResult": {"resourceName": "customers/1234567890/campaigns/99"}}]})
+        if "campaigns:mutate" in url:
+            return R({"results": [{}]})
+        if url.endswith("/adimages"):
+            return R({"images": {"x": {"hash": "abc"}}})
+        if url.endswith("/campaigns"):
+            assert kw["data"]["status"] == "PAUSED"
+            return R({"id": "c1"})
+        if url.endswith("/adsets"):
+            return R({"id": "s1"})
+        if url.endswith("/adcreatives"):
+            return R({"id": "cr1"})
+        if url.endswith("/ads"):
+            assert kw["data"]["status"] == "PAUSED"
+            return R({"id": "a1"})
+        return R({"success": True})
+    monkeypatch.setattr(httpx, "post", fake_post)
+    lst = client.get(f"/api/clients/{cid}/campaigns").json()
+    assert lst["can_send"] == {"google": True, "meta": True}
+    g = client.post(f"/api/clients/{cid}/campaigns", json={"platform": "google", "service": "Project planning"}).json()
+    r = client.post(f"/api/clients/{cid}/campaigns/{g['id']}/send").json()
+    assert r["status"] == "sent" and r["remote"]["campaign"].endswith("/99")
+    assert client.post(f"/api/clients/{cid}/campaigns/{g['id']}/switch", json={"on": True}).json()["status"] == "live"
+    # Meta needs a photo and a Page ID
+    jpg = b"\xff\xd8\xff\xe0" + b"1" * 500
+    pid = client.post(f"/api/clients/{cid}/photos", files={"file": ("p.jpg", jpg, "image/jpeg")}).json()["photos"][0]["id"]
+    m = client.post(f"/api/clients/{cid}/campaigns", json={"platform": "meta", "service": "Project planning"}).json()
+    assert any(x["field"] == "photo_id" and x["level"] == "error" for x in m["checks"])
+    client.put(f"/api/clients/{cid}/campaigns/{m['id']}", json={"photo_id": pid})
+    assert "Page ID" in client.post(f"/api/clients/{cid}/campaigns/{m['id']}/send").json()["detail"]
+    client.put(f"/api/clients/{cid}/campaigns/{m['id']}", json={"page_id": "777"})
+    r = client.post(f"/api/clients/{cid}/campaigns/{m['id']}/send").json()
+    assert r["status"] == "sent" and r["remote"]["ad"] == "a1"
+    adset_call = next(kw for u, kw in calls if u.endswith("/adsets"))
+    assert '"radius": 5' in adset_call["data"]["targeting"] or '"countries"' in adset_call["data"]["targeting"]
+    assert client.delete(f"/api/clients/{cid}/campaigns/{m['id']}").status_code == 200
+    assert any(c["id"] == m["id"] for c in client.get(f"/api/clients/{cid}/campaigns").json()["campaigns"])   # sent campaigns can't be deleted

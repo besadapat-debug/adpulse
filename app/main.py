@@ -64,10 +64,10 @@ def current_user(request: Request) -> dict | None:
 
 # A client login can only read its own business: these pages/endpoints, GET only, and only for users.client_id.
 CLIENT_PATHS = re.compile(r"^/(?:$|logout$|clients/(?P<a>\d+)(?:/monthly|/trial-report)?$|api/platforms$|"
-                          r"api/clients/(?P<b>\d+)(?:/(?:performance|engagement|organic|seo|email|audience|local|monthly|trial))?$)")
+                          r"api/clients/(?P<b>\d+)(?:/(?:performance|engagement|organic|seo|email|audience|local|monthly|trial|campaigns(?:/\d+)?))?$)")
 
 
-CLIENT_WRITE = re.compile(r"^/api/clients/(\d+)/(?:details|photos(?:/\d+)?)$")
+CLIENT_WRITE = re.compile(r"^/api/clients/(\d+)/(?:details|photos(?:/\d+)?|campaigns/\d+/review)$")
 
 
 def require_user(request: Request) -> dict:
@@ -800,6 +800,128 @@ def photos_zip(cid: int, user=Depends(require_editor)):
     c = _client(cid)
     return Response(details.photos_zip(cid), media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{c["slug"]}-photos-and-details.zip"'})
+
+
+@app.get("/api/clients/{cid}/campaigns")
+def list_campaigns(cid: int, user=Depends(require_user)):
+    from .services import campaigns, details
+    _client(cid)
+    d = details.get(cid)
+    return {"campaigns": [{"id": c["id"], "platform": c["platform"], "name": c["name"], "status": c["status"],
+                           "status_label": campaigns.STATUSES.get(c["status"], c["status"]), "updated_at": c["updated_at"],
+                           "monthly_budget": c["data"].get("monthly_budget")} for c in campaigns.list_(cid)],
+            "services": [x.strip(" -•") for x in (d["details"].get("services") or "").splitlines() if x.strip(" -•")],
+            "can_send": {p: campaigns.can_send(cid, p) for p in ("google", "meta")},
+            "photos": [{"id": p["id"], "category": p["category"]} for p in d["photos"]],
+            "objectives": campaigns.META_OBJECTIVES, "ctas": campaigns.META_CTAS, "limits": {"google": campaigns.GOOGLE_LIMITS, "meta": campaigns.META_LIMITS},
+            "health": campaigns.is_health(cid)}
+
+
+@app.post("/api/clients/{cid}/campaigns")
+async def create_campaign(cid: int, request: Request, user=Depends(require_editor)):
+    from .services import campaigns
+    _client(cid)
+    b = await request.json()
+    try:
+        return campaigns.create(cid, b.get("platform", "google"), str(b.get("service") or ""), float(b.get("monthly_budget") or 600),
+                                int(b.get("radius_km") or 5), user["email"])
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/clients/{cid}/campaigns/{camp_id}")
+def get_campaign(cid: int, camp_id: int, user=Depends(require_user)):
+    from .services import campaigns
+    try:
+        return campaigns.get(cid, camp_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+
+@app.put("/api/clients/{cid}/campaigns/{camp_id}")
+async def put_campaign(cid: int, camp_id: int, request: Request, user=Depends(require_editor)):
+    from .services import campaigns
+    try:
+        return campaigns.update(cid, camp_id, await request.json())
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/clients/{cid}/campaigns/{camp_id}")
+def delete_campaign(cid: int, camp_id: int, user=Depends(require_editor)):
+    from .services import campaigns
+    campaigns.delete(cid, camp_id)
+    return {"ok": True}
+
+
+@app.post("/api/clients/{cid}/campaigns/{camp_id}/ask-approval")
+def ask_approval(cid: int, camp_id: int, user=Depends(require_editor)):
+    from .services import campaigns
+    try:
+        c = campaigns.get(cid, camp_id)
+        if any(i["level"] == "error" for i in c["checks"]):
+            raise ValueError("Fix the red problems before sending it to the owner.")
+        return campaigns.set_status(cid, camp_id, "awaiting_approval")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/clients/{cid}/campaigns/{camp_id}/review")
+async def review_campaign(cid: int, camp_id: int, request: Request, user=Depends(require_user)):
+    """The business owner approves the ad, or asks for changes (works from their client login)."""
+    from .services import campaigns
+    b = await request.json()
+    try:
+        c = campaigns.get(cid, camp_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    if c["status"] != "awaiting_approval":
+        raise HTTPException(400, "This campaign isn't waiting for approval.")
+    ok = bool(b.get("approve"))
+    db.audit(user["email"], "campaign_approved" if ok else "campaign_changes_requested", f"{cid}:{camp_id}")
+    return campaigns.set_status(cid, camp_id, "approved" if ok else "changes_requested", str(b.get("note") or ""), user["email"])
+
+
+@app.get("/api/clients/{cid}/campaigns/{camp_id}/google-ads-editor.csv")
+def campaign_csv(cid: int, camp_id: int, user=Depends(require_editor)):
+    from .services import campaigns
+    try:
+        c = campaigns.get(cid, camp_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    if c["platform"] != "google":
+        raise HTTPException(400, "The Google Ads Editor file is for Google campaigns.")
+    if c["status"] in ("draft", "approved", "changes_requested", "awaiting_approval"):
+        db.execute("UPDATE campaigns SET status='exported' WHERE id=? AND status IN ('approved')", (camp_id,))
+    slug = re.sub(r"[^a-z0-9]+", "-", c["name"].lower()).strip("-") or "campaign"
+    return Response(campaigns.editor_csv(c), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{slug}.csv"'})
+
+
+@app.post("/api/clients/{cid}/campaigns/{camp_id}/send")
+def send_campaign(cid: int, camp_id: int, user=Depends(require_editor)):
+    from .services import campaigns
+    try:
+        r = campaigns.send(cid, camp_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:  # network / platform problems
+        raise HTTPException(400, f"Couldn't send: {str(e)[:300]}")
+    db.audit(user["email"], "campaign_sent", f"{cid}:{camp_id}")
+    return r
+
+
+@app.post("/api/clients/{cid}/campaigns/{camp_id}/switch")
+async def switch_campaign(cid: int, camp_id: int, request: Request, user=Depends(require_editor)):
+    from .services import campaigns
+    on = bool((await request.json()).get("on"))
+    try:
+        r = campaigns.switch(cid, camp_id, on)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(400, f"Couldn't change it: {str(e)[:300]}")
+    db.audit(user["email"], "campaign_on" if on else "campaign_off", f"{cid}:{camp_id}")
+    return r
 
 
 @app.get("/api/clients/{cid}/logins")
