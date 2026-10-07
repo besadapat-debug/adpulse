@@ -31,7 +31,21 @@ FIELDS = [
     ("website_platform", "Your website is built with", "select", ""),
     ("website_manager", "Who looks after the website (name, company, email)", "text", "Leave blank if you do it yourself"),
     ("notes", "Anything else we should know", "textarea", ""),
+    # --- for tailoring the ads (shown under their own heading) ---
+    ("promote", "Which services do you most want more customers for?", "textarea",
+     "Most important first, one per line, e.g. Flu vaccinations, Webster packs, skin checks"),
+    ("customers", "Who are your best customers?", "textarea", "e.g. seniors and carers nearby, young families, people who work locally"),
+    ("why_us", "Why do people choose you over other businesses nearby?", "textarea",
+     "One per line, e.g. Open till 9pm, Free local delivery, Greek & Vietnamese spoken, Scripts ready while you wait"),
+    ("offers", "Any offers, events or seasonal services coming up?", "textarea",
+     "e.g. Free blood pressure checks on Tuesdays, flu shots from April. Only things you're happy to advertise."),
+    ("service_area", "Suburbs you want customers from", "text", "e.g. East Bentleigh, Bentleigh, Moorabbin, Ormond"),
+    ("languages", "Languages your team speaks", "text", ""),
+    ("ad_budget", "Rough monthly amount you're comfortable spending on ads", "text",
+     "Paid straight to Google/Meta on your own card. A range is fine, e.g. $300–$500"),
+    ("avoid", "Anything we should NOT advertise or say?", "textarea", ""),
 ]
+AD_FIELDS_START = "promote"
 PLATFORMS = ["Don't know", "WordPress", "Wix", "Squarespace", "Shopify", "GoDaddy", "Banner group / head office site", "Other"]
 ACCESS = [
     ("gbp_manager", "I've added the agency as Manager on our Google Business Profile",
@@ -56,7 +70,7 @@ def get(client_id: int) -> dict:
                      (client_id,))
     filled = sum(1 for k, *_ in FIELDS if str(data.get(k, "")).strip())
     return {"details": data, "fields": FIELDS, "platforms": PLATFORMS, "access": ACCESS, "photo_types": PHOTO_TYPES,
-            "photos": photos, "filled": filled, "total": len(FIELDS),
+            "photos": photos, "filled": filled, "ad_start": AD_FIELDS_START, "total": len(FIELDS),
             "access_done": sum(1 for k, *_ in ACCESS if data.get(k)), "updated_by": (row or {}).get("updated_by"),
             "updated_at": (row or {}).get("updated_at")}
 

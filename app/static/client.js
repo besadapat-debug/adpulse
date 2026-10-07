@@ -523,12 +523,12 @@ R.details = async () => {
     ${help ? `<span class="small muted">${fmt.esc(help)}</span>` : ''}</label>`;
   view.innerHTML = `
     <div class="callout small" style="margin-bottom:12px">${IS_CLIENT
-      ? `<b>Help us set up your Google listing and website.</b> Fill in what you can and upload a few photos. It saves as you go, and you can come back any time.`
+      ? `<b>Help us set up your Google listing, website and ads.</b> Fill in what you can, including the <b>About your customers &amp; ads</b> questions further down, and upload a few photos. It saves as you go, and you can come back any time.`
       : `The owner can fill this in from their own login (Client settings → Client login). Everything you need for their Google profile and website in one place. <a href="${base}/photos.zip">⬇ Download all photos &amp; details (zip)</a>`}
       ${d.updated_at ? `<div class="muted" style="margin-top:4px">Last updated ${fmt.esc(d.updated_at)}${d.updated_by ? ' by ' + fmt.esc(d.updated_by) : ''}</div>` : ''}</div>
     <div class="grid g2">
       <form class="card" id="detForm"><div class="row" style="justify-content:space-between"><h2>Business details</h2><span class="badge ${d.filled === d.total ? 'good' : ''}">${d.filled} of ${d.total} filled in</span></div>
-        <div style="display:grid;gap:12px">${d.fields.map(field).join('')}</div>
+        <div style="display:grid;gap:12px">${d.fields.map(f => (f[0] === d.ad_start ? `<h2 style="margin:14px 0 0">About your customers &amp; ads</h2><p class="small muted" style="margin:0">${IS_CLIENT ? 'This is what we use to write ads that sound like your business and reach the right people.' : 'Used by the campaign builder: priority services, reasons to choose them and offers go straight into the ad drafts.'}</p>` : '') + field(f)).join('')}</div>
         <div style="margin-top:12px"><button class="btn primary">Save details</button></div></form>
       <div>
         <div class="card"><h2>Access for the agency <span class="badge ${d.access_done === d.access.length ? 'good' : 'warn'}">${d.access_done} of ${d.access.length}</span></h2>

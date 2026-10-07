@@ -719,3 +719,16 @@ def test_client_can_change_own_password(client):
         assert c.post("/login", data={"email": "tamer@pharm.example", "password": "newpass99"}, follow_redirects=False).headers["location"] == "/"
     uid = [u for u in client.get(f"/api/clients/{cid}/logins").json() if u["email"] == "tamer@pharm.example"][0]["id"]
     client.delete(f"/api/clients/{cid}/logins/{uid}")
+
+
+def test_ad_questions_feed_campaign_drafts(client):
+    from app.services import campaigns
+    cid = _cid(client)
+    client.put(f"/api/clients/{cid}/details", json={"promote": "Flu vaccinations\nWebster packs", "why_us": "Open till 9pm\nFree local delivery",
+                                                   "offers": "Free blood pressure checks on Tuesdays"})
+    d = client.get(f"/api/clients/{cid}/details").json()
+    assert d["details"]["why_us"].startswith("Open") and d["ad_start"] == "promote"
+    g = campaigns.draft(cid, "google", "")
+    assert g["service"] == "Flu vaccinations"
+    assert "Open till 9pm" in g["headlines"] and g["descriptions"][0].startswith("Open till 9pm. Free local delivery")
+    assert any("blood pressure" in x for x in g["descriptions"])

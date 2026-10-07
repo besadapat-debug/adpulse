@@ -67,12 +67,13 @@ def business_context(client_id: int) -> dict:
     from . import details
     c = db.one("SELECT name, area, search_term FROM clients WHERE id=?", (client_id,)) or {}
     d = details.get(client_id)["details"]
-    services = [s.strip(" -•\t") for s in (d.get("services") or "").splitlines() if s.strip(" -•\t")]
+    lines = lambda k: [x.strip(" -•\t") for x in re.split(r"[\r\n]+", d.get(k) or "") if x.strip(" -•\t")]
+    services = lines("promote") + [x for x in lines("services") if x not in lines("promote")]
     area = (c.get("area") or "").replace(" VIC", "").replace(" NSW", "").replace(" QLD", "").strip() or ""
     return {"business": d.get("business_name") or c.get("name") or "", "area": area, "area_full": c.get("area") or "",
             "term": c.get("search_term") or "", "services": services, "phone": d.get("phone") or "",
             "website": d.get("website") or "", "booking": d.get("booking_link") or "", "address": d.get("address") or "",
-            "hours": d.get("hours") or ""}
+            "hours": d.get("hours") or "", "why_us": lines("why_us"), "offers": lines("offers")}
 
 
 def is_health(client_id: int) -> bool:
@@ -98,10 +99,11 @@ def draft(client_id: int, platform: str, service: str, monthly_budget: float = 6
         term = ctx["term"] or ""
         heads = _uniq([_fit(h, 30) for h in [
             f"{s} in {a}" if a else s, f"{s} Near You", b, f"Book {s} Online" if ctx["booking"] else f"Enquire About {s}",
-            "Book Online Today" if ctx["booking"] else "Call Us Today", f"Local {term.title()} in {a}" if term and a else "",
+            "Book Online Today" if ctx["booking"] else "Call Us Today", *ctx["why_us"][:4], f"Local {term.title()} in {a}" if term and a else "",
             f"Visit Us in {a}" if a else "", "Friendly Local Team", "Walk-ins Welcome", f"{s} – {b}", "Easy Online Booking" if ctx["booking"] else "",
             f"Your Local {term.title()}" if term else "", "See Our Opening Hours", s]])
-        descs = _uniq([_fit(d, 90) for d in [
+        own = ([". ".join(x.rstrip(".") for x in ctx["why_us"][:3]) + "."] if ctx["why_us"] else []) + ctx["offers"][:1]
+        descs = _uniq([_fit(d, 90) for d in own + [
             f"{s} at {b}{' in ' + a if a else ''}. {'Book online' if ctx['booking'] else 'Call'} or visit us today.",
             f"Friendly local team{' in ' + a if a else ''}. " + (", ".join(ctx["services"][:3]) + "." if ctx["services"] else "Here to help."),
             f"Find us{' in ' + a if a else ''}. Check our opening hours and {'book online in a few clicks' if ctx['booking'] else 'give us a call'}.",
