@@ -28,6 +28,7 @@
       {% if not is_client %}<a href="#" onclick="document.getElementById('newClient').showModal();return false" class="muted">＋ Add client</a>{% endif %}
       <div class="sect">Account</div>
       <div class="small muted" style="padding:2px 10px 6px">{{ user.email }}</div>
+      <a href="/account/password" class="{{ 'active' if page == 'password' }}">🔑 Change password</a>
       <a href="/logout">↩ Sign out</a>
     </nav>
   </aside>

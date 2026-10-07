@@ -702,3 +702,20 @@ def test_meta_login_url(monkeypatch):
     monkeypatch.setenv("META_CONFIG_ID", "999")
     u = oauth.authorize_url("meta", "st")
     assert "config_id=999" in u and "scope=" not in u
+
+
+def test_client_can_change_own_password(client):
+    cid = _cid(client)
+    client.post(f"/api/clients/{cid}/logins", json={"email": "tamer@pharm.example", "password": "adpulse1!", "name": "Tamer"})
+    with TestClient(app) as c:
+        c.post("/login", data={"email": "tamer@pharm.example", "password": "adpulse1!"})
+        assert c.get("/account/password").status_code == 200
+        bad = c.post("/account/password", data={"current": "wrong", "new": "newpass99", "confirm": "newpass99"}, follow_redirects=False)
+        assert "error" in bad.headers["location"]
+        ok = c.post("/account/password", data={"current": "adpulse1!", "new": "newpass99", "confirm": "newpass99"}, follow_redirects=False)
+        assert ok.headers["location"].endswith("done=1")
+    with TestClient(app) as c:
+        assert "error" in c.post("/login", data={"email": "tamer@pharm.example", "password": "adpulse1!"}, follow_redirects=False).headers["location"]
+        assert c.post("/login", data={"email": "tamer@pharm.example", "password": "newpass99"}, follow_redirects=False).headers["location"] == "/"
+    uid = [u for u in client.get(f"/api/clients/{cid}/logins").json() if u["email"] == "tamer@pharm.example"][0]["id"]
+    client.delete(f"/api/clients/{cid}/logins/{uid}")

@@ -63,7 +63,7 @@ def current_user(request: Request) -> dict | None:
 
 
 # A client login can only read its own business: these pages/endpoints, GET only, and only for users.client_id.
-CLIENT_PATHS = re.compile(r"^/(?:$|logout$|clients/(?P<a>\d+)(?:/monthly|/trial-report)?$|api/platforms$|"
+CLIENT_PATHS = re.compile(r"^/(?:$|logout$|account/password$|clients/(?P<a>\d+)(?:/monthly|/trial-report)?$|api/platforms$|"
                           r"api/clients/(?P<b>\d+)(?:/(?:performance|engagement|organic|seo|email|audience|local|monthly|trial|campaigns(?:/\d+)?))?$)")
 
 
@@ -138,6 +138,27 @@ def logout():
     r = RedirectResponse("/login", status_code=303)
     r.delete_cookie("session")
     return r
+
+
+@app.get("/account/password", response_class=HTMLResponse)
+def password_page(request: Request, user=Depends(require_user), error: str = "", done: str = ""):
+    return templates.TemplateResponse(request, "password.html", ctx(request, user, page="password", error=error, done=done))
+
+
+@app.post("/account/password")
+def change_password(request: Request, current: str = Form(...), new: str = Form(...), confirm: str = Form(...)):
+    u = current_user(request)        # any signed-in user (incl. client logins) may change their OWN password
+    if not u:
+        return RedirectResponse("/login", status_code=303)
+    row = db.one("SELECT password_hash FROM users WHERE id=?", (u["id"],))
+    err = ("Your current password isn't right" if not verify_password(current, row["password_hash"])
+           else "The new password needs at least 8 characters" if len(new) < 8
+           else "The two new passwords don't match" if new != confirm else "")
+    if err:
+        return RedirectResponse("/account/password?error=" + err.replace(" ", "+").replace("'", "%27"), status_code=303)
+    db.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_password(new), u["id"]))
+    db.audit(u["email"], "password changed")
+    return RedirectResponse("/account/password?done=1", status_code=303)
 
 
 @app.get("/setup", response_class=HTMLResponse)
