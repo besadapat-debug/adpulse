@@ -15,8 +15,11 @@
   <a href="#monthly">Monthly report</a><a href="#trial">7-day trial</a><a href="#details">Business details &amp; photos</a><a href="#campaigns">Campaigns</a><a href="#local">Google &amp; reviews</a><a href="#performance">Paid performance</a><a href="#engagement">Ad engagement</a>
   <a href="#audience">Audience</a><a href="#organic">Web &amp; social</a><a href="#seo">SEO</a><a href="#email">Email</a>
   {% if not is_client %}<a href="#attribution">Attribution</a><a href="#people">People</a><a href="#companies">Companies</a><a href="#audiences">Audiences</a><a href="#budget">Budget</a>
-  <a href="#alerts">Alerts <span class="count" id="alertCount" hidden></span></a><a href="#upload">Upload data</a><a href="#connections">Connections</a><a href="#settings">Client settings</a>{% endif %}
+  <a href="#alerts">Alerts <span class="count" id="alertCount" hidden></span></a>{% endif %}<a href="#upload">Upload data</a>{% if not is_client %}<a href="#connections">Connections</a><a href="#settings">Client settings</a>{% endif %}
 </nav>
+{% if demo_n and not is_client %}<div class="callout warn no-print" id="demoBanner" style="margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+  <span><b>These numbers are made up.</b> {{ client.name }} has {{ demo_n }} demo connection{{ 's' if demo_n != 1 }}, so the reports below show sample data, not their real results.</span>
+  <button class="btn sm primary" onclick="clearDemo(this)">Remove demo data</button></div>{% endif %}
 <div id="view"></div>
 
 <dialog id="connDlg"><form method="dialog" onsubmit="return submitConn(event)">

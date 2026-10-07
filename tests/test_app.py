@@ -470,13 +470,16 @@ def test_client_login_sees_only_own_business(client):
         for ok in [f"/api/clients/{cid}/monthly", f"/api/clients/{cid}/local", f"/api/clients/{cid}/audience", f"/api/clients/{cid}/performance"]:
             assert c.get(ok).status_code == 200, ok
         for bad in [f"/api/clients/{other}/performance", "/api/overview", "/api/prospects", f"/api/clients/{cid}/people", f"/api/clients/{cid}/connections",
-                    "/api/agency", f"/api/clients/{cid}/imports", "/api/rate-card"]:
+                    "/api/agency", "/api/rate-card"]:
             assert c.get(bad).status_code == 403, bad
-        assert c.patch(f"/api/clients/{cid}", json={"name": "x"}).status_code == 403
-        assert c.put(f"/api/clients/{cid}/local/2026-08", json={"values": {"calls": 1}}).status_code == 403
+        assert c.patch(f"/api/clients/{cid}", json={"name": "x", "area": "Bentleigh VIC"}).json()["name"] != "x"   # only suburb/term
+        assert c.put(f"/api/clients/{cid}/local/2026-08", json={"values": {"calls": 1}}).status_code == 200   # owners fill in Google figures
+        assert c.put(f"/api/clients/{other}/local/2026-08", json={"values": {"calls": 1}}).status_code == 403
+        assert c.get(f"/api/clients/{cid}/imports").status_code == 200
+        assert c.post(f"/api/clients/{cid}/connections", json={"platform": "meta_ads", "demo": True}).status_code == 403
         assert c.get(f"/clients/{other}", follow_redirects=False).status_code in (302, 307)
         page = c.get(f"/clients/{cid}").text
-        assert "Prospects &amp; audits" not in page and "Upload data" not in page and "Monthly report" in page
+        assert "Prospects &amp; audits" not in page and "Connections" not in page and "Upload data" in page and "Monthly report" in page
     uid = client.get(f"/api/clients/{cid}/logins").json()[0]["id"]
     assert client.delete(f"/api/clients/{cid}/logins/{uid}").json() == []
 
@@ -525,13 +528,15 @@ def test_seven_day_trial(client):
         assert "7 new Google reviews" in anon.get("/t/" + url.split("/t/")[1]).text
     client.put(f"/api/clients/{cid}/trial", json={"show_price": False})
     assert 'class="noprice"' in client.get(f"/clients/{cid}/trial-report").text
-    # a client login can see the trial and the report, not change them
+    # a client login can see the trial and fill in numbers, but not change the plan or pricing
     client.post(f"/api/clients/{cid}/logins", json={"email": "trial@harbour.example", "password": "harbour123"})
     with TestClient(app) as c:
         c.post("/login", data={"email": "trial@harbour.example", "password": "harbour123"})
         assert c.get(f"/api/clients/{cid}/trial").json()["done"] == 1
         assert c.get(f"/clients/{cid}/trial-report").status_code == 200
-        assert c.put(f"/api/clients/{cid}/trial", json={"goal": "x"}).status_code == 403
+        assert c.put(f"/api/clients/{cid}/trial", json={"show_price": True}).status_code == 200
+        assert 'class="noprice"' in c.get(f"/clients/{cid}/trial-report").text      # pricing switch ignored for owners
+        assert c.post(f"/api/clients/{cid}/trial-link").status_code == 403
 
 
 def test_trial_website_before_after(client, monkeypatch):
@@ -732,3 +737,41 @@ def test_ad_questions_feed_campaign_drafts(client):
     assert g["service"] == "Flu vaccinations"
     assert "Open till 9pm" in g["headlines"] and g["descriptions"][0].startswith("Open till 9pm. Free local delivery")
     assert any("blood pressure" in x for x in g["descriptions"])
+
+
+
+def test_owner_fills_trial_numbers_but_not_the_plan(client):
+    cid = _cid(client, "Stride Running Co")
+    client.post(f"/api/clients/{cid}/trial/start", json={})
+    client.post(f"/api/clients/{cid}/logins", json={"email": "own@stride.example", "password": "stride1234"})
+    with TestClient(app) as c:
+        c.post("/login", data={"email": "own@stride.example", "password": "stride1234"})
+        t = c.get(f"/api/clients/{cid}/trial").json()
+        tid = t["tasks"][0]["id"]
+        r = c.put(f"/api/clients/{cid}/trial", json={"baseline": {"reviews_total": 12}, "goal": "More flu shots", "show_price": True,
+                                                     "tasks": [{"id": tid, "done": True}]})
+        assert r.status_code == 200
+        t = r.json()
+        assert t["baseline"]["reviews_total"] == 12 and t["goal"] == "More flu shots"
+        assert not t["tasks"][0]["done"]                     # the plan stays with the agency
+        assert c.post(f"/api/clients/{cid}/trial/start", json={}).status_code == 403
+    uid = [u for u in client.get(f"/api/clients/{cid}/logins").json() if u["email"] == "own@stride.example"][0]["id"]
+    client.delete(f"/api/clients/{cid}/logins/{uid}")
+
+
+def test_remove_demo_data(client):
+    from app import db
+    cid = client.post("/api/clients", data={"name": "Demo Purge Pharmacy", "industry": "health"}).json()["id"]
+    client.put(f"/api/clients/{cid}/local/2026-08", json={"values": {"calls": 40}})          # typed in: must survive
+    assert client.post(f"/api/clients/{cid}/connections", json={"platform": "google_ads", "demo": True}).json()["sync"]["ok"]
+    client.post(f"/api/clients/{cid}/connections", json={"platform": "ga4", "demo": True})
+    assert db.one("SELECT COUNT(*) n FROM ad_metrics WHERE client_id=?", (cid,))["n"] > 0
+    assert "These numbers are made up" in client.get(f"/clients/{cid}").text
+    assert client.post(f"/api/clients/{cid}/demo/clear").json()["removed"] == 2
+    for t in ("ad_metrics", "engagement_metrics", "connections"):
+        assert db.one(f"SELECT COUNT(*) n FROM {t} WHERE client_id=?", (cid,))["n"] == 0, t
+    assert db.one("SELECT COUNT(*) n FROM demographics WHERE client_id=? AND source='demo'", (cid,))["n"] == 0
+    assert db.one("SELECT COUNT(*) n FROM organic_metrics WHERE client_id=? AND dimension<>'monthly'", (cid,))["n"] == 0
+    assert client.get(f"/api/clients/{cid}/local").json()["series"][0]["calls"] == 40
+    assert "These numbers are made up" not in client.get(f"/clients/{cid}").text
+    client.delete(f"/api/clients/{cid}")

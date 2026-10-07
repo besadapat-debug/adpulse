@@ -67,7 +67,17 @@ CLIENT_PATHS = re.compile(r"^/(?:$|logout$|account/password$|clients/(?P<a>\d+)(
                           r"api/clients/(?P<b>\d+)(?:/(?:performance|engagement|organic|seo|email|audience|local|monthly|trial|campaigns(?:/\d+)?))?$)")
 
 
-CLIENT_WRITE = re.compile(r"^/api/clients/(\d+)/(?:details|photos(?:/\d+)?|campaigns/\d+/review)$")
+# What a client login may change on its OWN business (method, path). Everything else is read-only for them.
+CLIENT_WRITE = [
+    ({"GET", "PUT"}, re.compile(r"^/api/clients/(\d+)/details$")),
+    ({"GET", "POST", "DELETE"}, re.compile(r"^/api/clients/(\d+)/photos(?:/\d+)?$")),
+    ({"POST"}, re.compile(r"^/api/clients/(\d+)/campaigns/\d+/review$")),
+    ({"PUT"}, re.compile(r"^/api/clients/(\d+)/local/\d{4}-\d{2}$")),              # Google & reviews: monthly figures, competitors
+    ({"POST"}, re.compile(r"^/api/clients/(\d+)/local/\d{4}-\d{2}/(?:find|refresh)$")),
+    ({"PUT"}, re.compile(r"^/api/clients/(\d+)/trial$")),                            # trial numbers & checklist (filtered below)
+    ({"POST"}, re.compile(r"^/api/clients/(\d+)/import$")), ({"GET"}, re.compile(r"^/api/clients/(\d+)/imports$")),  # upload reports
+    ({"PATCH"}, re.compile(r"^/api/clients/(\d+)$")),                                # suburb & "what they do" only (filtered below)
+]
 
 
 def require_user(request: Request) -> dict:
@@ -76,9 +86,10 @@ def require_user(request: Request) -> dict:
         raise HTTPException(401, "Not signed in")
     if u["role"] == "client":
         path = request.url.path
-        w = CLIENT_WRITE.match(path)
-        if w and request.method in ("GET", "POST", "PUT", "DELETE") and u["client_id"] and int(w.group(1)) == u["client_id"]:
-            return u                      # the owner may fill in their own business details and photos
+        for methods, rx in CLIENT_WRITE:
+            w = rx.match(path)
+            if w and request.method in methods and u["client_id"] and int(w.group(1)) == u["client_id"]:
+                return u                  # the owner may fill in their own business's forms
         m = CLIENT_PATHS.match(path)
         cid = m and (m.group("a") or m.group("b"))
         if not m or request.method != "GET" or (cid and int(cid) != u["client_id"]) or not u["client_id"]:
@@ -88,6 +99,13 @@ def require_user(request: Request) -> dict:
 
 def require_editor(user: dict = Depends(require_user)) -> dict:
     if user["role"] in ("viewer", "client"):
+        raise HTTPException(403, "Read-only account")
+    return user
+
+
+def require_contributor(user: dict = Depends(require_user)) -> dict:
+    """Agency editors, plus client logins on the routes CLIENT_WRITE lets them fill in (checked in require_user)."""
+    if user["role"] == "viewer":
         raise HTTPException(403, "Read-only account")
     return user
 
@@ -192,7 +210,8 @@ def client_page(request: Request, cid: int, user=Depends(require_user)):
     c = db.one("SELECT * FROM clients WHERE id=?", (cid,))
     if not c:
         raise HTTPException(404)
-    return templates.TemplateResponse(request, "client.html", ctx(request, user, page="client", client=c))
+    demo_n = db.one("SELECT COUNT(*) n FROM connections WHERE client_id=? AND is_demo=1", (cid,))["n"]
+    return templates.TemplateResponse(request, "client.html", ctx(request, user, page="client", client=c, demo_n=demo_n))
 
 
 @app.get("/settings", response_class=HTMLResponse)
@@ -281,9 +300,10 @@ EDITABLE = {"name", "industry", "currency", "brand_color", "logo_url", "report_t
 
 
 @app.patch("/api/clients/{cid}")
-async def update_client(cid: int, request: Request, user=Depends(require_editor)):
+async def update_client(cid: int, request: Request, user=Depends(require_contributor)):
     _client(cid)
-    body = {k: v for k, v in (await request.json()).items() if k in EDITABLE}
+    allowed = {"area", "search_term"} if user["role"] == "client" else EDITABLE
+    body = {k: v for k, v in (await request.json()).items() if k in allowed}
     if body:
         db.execute(f"UPDATE clients SET {', '.join(f'{k}=?' for k in body)} WHERE id=?", (*body.values(), cid))
     return _client(cid)
@@ -401,8 +421,47 @@ async def add_connection(cid: int, request: Request, user=Depends(require_editor
     return {"id": conn_id, "sync": sync_connection(conn_id, full=True)}
 
 
+def _purge_demo(cid: int, only_id: int | None = None) -> int:
+    """Delete a client's demo connections (or just one) and every made-up number they generated.
+    Typed-in figures and uploaded reports stay."""
+    demo = db.rows("SELECT id, platform, account_id FROM connections WHERE client_id=? AND is_demo=1" + (" AND id=?" if only_id else ""),
+                   (cid, only_id) if only_id else (cid,))
+    ids = {d["id"] for d in demo}
+    keep = {r["platform"] for r in db.rows("SELECT id, platform FROM connections WHERE client_id=?", (cid,)) if r["id"] not in ids}
+    seo_src = {"gsc": "gsc", "bing_webmaster": "bing", "dataforseo": "rank"}
+    with db.tx() as c:
+        for d in demo:
+            p, a = d["platform"], d["account_id"]
+            c.execute("DELETE FROM ad_metrics WHERE client_id=? AND platform=? AND account_id=?", (cid, p, a))
+            c.execute("DELETE FROM engagement_metrics WHERE client_id=? AND platform=? AND account_id=?", (cid, p, a))
+            if p not in keep:
+                c.execute("DELETE FROM organic_metrics WHERE client_id=? AND platform=? AND dimension<>'monthly'", (cid, p))
+                c.execute("DELETE FROM email_metrics WHERE client_id=? AND platform=?", (cid, p))
+                c.execute("DELETE FROM demographics WHERE client_id=? AND platform=? AND source='demo'", (cid, p))
+                if p in seo_src:
+                    c.execute("DELETE FROM seo_queries WHERE client_id=? AND source=?", (cid, seo_src[p]))
+            c.execute("DELETE FROM sync_log WHERE connection_id=?", (d["id"],))
+            c.execute("DELETE FROM connections WHERE id=?", (d["id"],))
+        if not only_id:
+            c.execute("DELETE FROM demographics WHERE client_id=? AND source='demo'", (cid,))
+        if demo:
+            c.execute("DELETE FROM alerts WHERE client_id=?", (cid,))
+    return len(demo)
+
+
+@app.post("/api/clients/{cid}/demo/clear")
+def clear_demo(cid: int, user=Depends(require_editor)):
+    _client(cid)
+    n = _purge_demo(cid)
+    db.audit(user["email"], "demo_clear", f"client={cid} connections={n}")
+    return {"removed": n}
+
+
 @app.delete("/api/connections/{conn_id}")
 def del_connection(conn_id: int, user=Depends(require_editor)):
+    conn = db.one("SELECT client_id, is_demo FROM connections WHERE id=?", (conn_id,))
+    if conn and conn["is_demo"]:      # removing a demo connection also removes its made-up numbers
+        _purge_demo(conn["client_id"], conn_id)
     db.execute("DELETE FROM connections WHERE id=?", (conn_id,))
     db.audit(user["email"], "connection_delete", str(conn_id))
     return {"ok": True}
@@ -585,7 +644,7 @@ def report_link(cid: int, days: int = 30, valid_days: int = 90, user=Depends(req
 # uploads, audience, Google Maps & reviews, monthly report, client logins
 @app.post("/api/clients/{cid}/import")
 async def import_report(cid: int, file: UploadFile = File(...), platform: str = Form("auto"), period_from: str = Form(""),
-                        period_to: str = Form(""), user=Depends(require_editor)):
+                        period_to: str = Form(""), user=Depends(require_contributor)):
     from .services import imports
     _client(cid)
     raw = await file.read()
@@ -600,7 +659,7 @@ async def import_report(cid: int, file: UploadFile = File(...), platform: str = 
 
 
 @app.get("/api/clients/{cid}/imports")
-def import_history(cid: int, user=Depends(require_editor)):
+def import_history(cid: int, user=Depends(require_contributor)):
     from .services import imports
     return {"history": imports.history(cid), "platforms": imports.PLATFORMS}
 
@@ -620,7 +679,7 @@ def api_local(cid: int, user=Depends(require_user)):
 
 
 @app.put("/api/clients/{cid}/local/{month}")
-async def put_local(cid: int, month: str, request: Request, user=Depends(require_editor)):
+async def put_local(cid: int, month: str, request: Request, user=Depends(require_contributor)):
     from .services import local
     _client(cid)
     body = await request.json()
@@ -635,7 +694,7 @@ async def put_local(cid: int, month: str, request: Request, user=Depends(require
 
 
 @app.post("/api/clients/{cid}/local/{month}/find")
-def find_local_competitors(cid: int, month: str, user=Depends(require_editor)):
+def find_local_competitors(cid: int, month: str, user=Depends(require_contributor)):
     from .services import local
     _client(cid)
     try:
@@ -646,7 +705,7 @@ def find_local_competitors(cid: int, month: str, user=Depends(require_editor)):
 
 
 @app.post("/api/clients/{cid}/local/{month}/refresh")
-def refresh_local(cid: int, month: str, user=Depends(require_editor)):
+def refresh_local(cid: int, month: str, user=Depends(require_contributor)):
     from .services import local
     _client(cid)
     try:
@@ -719,11 +778,14 @@ async def start_trial(cid: int, request: Request, user=Depends(require_editor)):
 
 
 @app.put("/api/clients/{cid}/trial")
-async def put_trial(cid: int, request: Request, user=Depends(require_editor)):
+async def put_trial(cid: int, request: Request, user=Depends(require_contributor)):
     from .services import trial
     _client(cid)
+    body = await request.json()
+    if user["role"] == "client":       # owners fill in the numbers and checklist; the plan and pricing stay with the agency
+        body = {k: v for k, v in body.items() if k in ("baseline", "after", "checks_before", "checks_after", "goal", "website_url")}
     try:
-        return trial.update(cid, await request.json())
+        return trial.update(cid, body)
     except ValueError as e:
         raise HTTPException(400, str(e))
 

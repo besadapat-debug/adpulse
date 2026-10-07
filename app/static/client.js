@@ -398,6 +398,7 @@ R.connections = async () => {
       <td class="small muted">${c.last_synced_at ? c.last_synced_at.replace('T', ' ') + ' UTC' : 'never'}</td>
       <td class="r"><button class="btn sm" onclick="syncConn(${c.id},this)">Sync</button> <button class="btn sm ghost" onclick="delConn(${c.id})">Remove</button></td></tr>`).join('') || '<tr><td colspan=5 class="empty">Nothing connected yet</td></tr>'}
   </tbody></table></div></div>
+  ${conns.some(c => c.is_demo) ? `<div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn" onclick="clearDemo(this)">🗑 Remove all demo data</button></div>` : ''}
   <div class="card" style="margin-top:14px"><h2>Add a connection</h2>
     ${Object.entries(cats).map(([k, lbl]) => `<h3 style="margin-top:14px">${lbl}</h3><div class="row">${plats.filter(p => p.category === k).map(p =>
       `<button class="btn sm" onclick="openConn('${p.platform}')">${fmt.esc(p.label)}${p.live ? '' : ' <span class="muted small">(demo)</span>'}</button>`).join('')}</div>`).join('')}
@@ -413,7 +414,7 @@ function openConn(p) {
   let body = `<label class="f">Account<input name="account_id" placeholder="${hint}"></label>`;
   if (pl.live && pl.auth === 'api_key') body += (keyFields[p] || [['api_key', 'API key']]).map(([k, l]) => `<label class="f">${l}<input name="cred_${k}" ${k === 'api_key' || k === 'password' ? 'type="password"' : ''}></label>`).join('');
   if (pl.live && pl.auth === 'oauth') body += pl.oauth_ready ? `<div class="callout small">You'll be sent to ${pl.oauth_provider} to authorise read access. Tokens are stored encrypted.</div>`
-    : `<div class="callout warn small">${pl.oauth_provider} app credentials aren't configured on this server yet, so only a demo connection is possible.</div>`;
+    : `<div class="callout warn small"><b>Don't use this for a real client.</b> ${pl.oauth_provider} isn't set up on this server yet, so connecting now would only fill their reports with <b>made-up numbers</b>. Set it up first (DEPLOY.md), then come back. Click Cancel.</div>`;
   body += `<label class="row small"><input type="checkbox" name="demo" ${!pl.live || (pl.auth === 'oauth' && !pl.oauth_ready) ? 'checked disabled' : ''}> Use demo data</label>`;
   $('#connBody').innerHTML = body;
   $('#connDlg').dataset.platform = p;
@@ -423,6 +424,7 @@ async function submitConn(e) {
   e.preventDefault();
   const p = $('#connDlg').dataset.platform, pl = PLATS.find(x => x.platform === p), fd = new FormData(e.target);
   const demo = e.target.querySelector('[name=demo]').checked;
+  if (demo && !confirm('This adds MADE-UP sample numbers to ' + CLIENT.name + ' (for testing only). Continue?')) return false;
   const account = fd.get('account_id') || '';
   if (!demo && pl.auth === 'oauth') { location.href = `/oauth/${pl.oauth_provider}/start?client_id=${CLIENT.id}&platform=${p}&account_id=${encodeURIComponent(account)}`; return false; }
   const creds = {}; for (const [k, v] of fd.entries()) if (k.startsWith('cred_')) creds[k.slice(5)] = v;
@@ -434,7 +436,13 @@ async function submitConn(e) {
   return false;
 }
 async function syncConn(id, btn) { btn.disabled = true; btn.textContent = '…'; const r = await api(`/api/connections/${id}/sync`, { method: 'POST' }); toast(r.ok ? `${r.rows} rows updated` : r.error, 5000); route(); }
-async function delConn(id) { if (confirm('Remove this connection? Historical data stays until you delete the client.')) { await api(`/api/connections/${id}`, { method: 'DELETE' }); route(); } }
+async function clearDemo(btn) {
+  if (!confirm('Remove every demo connection and all the made-up numbers for ' + CLIENT.name + '? Anything typed in or uploaded stays.')) return;
+  btn.disabled = true;
+  try { const r = await api(`${base}/demo/clear`, { method: 'POST' }); toast(`Removed ${r.removed} demo connection(s) and their sample data`); const b = $('#demoBanner'); if (b) b.remove(); route(); }
+  catch (e) { toast(e.message); btn.disabled = false; }
+}
+async function delConn(id) { if (confirm('Remove this connection? For a real account its past data stays; for a demo one the sample numbers are removed too.')) { await api(`/api/connections/${id}`, { method: 'DELETE' }); route(); } }
 
 /* ---------------- client settings, branding, privacy ---------------- */
 R.settings = async () => {
@@ -711,7 +719,7 @@ function renderCampaign(c, L) {
 R.trial = async () => {
   const t = await api(`${base}/trial`);
   setPeriod(null); $('#periodLabel').textContent = '7-day trial';
-  const ro = IS_CLIENT ? 'disabled' : '';
+  const ro = '', roTask = IS_CLIENT ? 'disabled' : '';
   if (!t.started) {
     view.innerHTML = `<div class="card"><h2>7-day trial</h2>
       ${IS_CLIENT ? '<div class="empty">No trial running.</div>' : `
@@ -725,7 +733,7 @@ R.trial = async () => {
   const pct = Math.round(100 * t.done / t.total);
   const days = [1, 2, 3, 4, 5, 6, 7];
   const DAY_TITLE = { 1: 'Set up & measure', 2: 'Fix the Google profile', 3: 'Photos & first post', 4: 'Reviews system', 5: 'Website quick wins', 6: 'Second post & FAQs', 7: 'Measure & report' };
-  view.innerHTML = `
+  view.innerHTML = `${IS_CLIENT ? '<div class="callout small" style="margin-bottom:12px">✏️ <b>Your part this week:</b> write your goal, add your website, and fill in the <b>Before &amp; after numbers</b> and <b>Google profile checklist</b> below (Day 1 now, Day 7 at the end). We tick off the day-by-day plan as we go.</div>' : ''}
     <div class="card"><div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap">
       <div><h2 style="margin:0">Day ${t.day} of 7 <span class="small muted">· ${t.start_date} → ${t.end_date}</span></h2>
         <div class="row" style="gap:8px;margin-top:6px"><div class="bar-track" style="width:220px"><div class="bar-fill" style="width:${pct}%;background:${cssVar('--good')}"></div></div><span class="small">${t.done} of ${t.total} tasks done</span></div></div>
@@ -736,7 +744,7 @@ R.trial = async () => {
     ${webCard(t, ro)}
     <div class="grid g2" style="margin-top:14px">
       <div class="card"><h2>Before &amp; after numbers</h2>
-        <p class="small muted">Fill in <b>Day 1</b> now and <b>Day 7</b> at the end. Reviews, rating and photos are on their Google Maps listing; posts, calls and directions are in their Google Business Profile → Performance (needs Manager access). Leave blank what you can't see.</p>
+        <p class="small muted">${IS_CLIENT ? 'Please fill in <b>Day 1</b> now and <b>Day 7</b> at the end of the week. Reviews, rating and photos are on your Google Maps listing; calls, directions and website clicks are in your Google Business Profile → Performance. Leave blank anything you can\'t see.' : 'Fill in <b>Day 1</b> now and <b>Day 7</b> at the end (the owner can also fill these in from their login). Reviews, rating and photos are on their Google Maps listing; posts, calls and directions are in their Google Business Profile → Performance (needs Manager access). Leave blank what you can\'t see.'}</p>
         <table class="snap"><thead><tr><th></th><th class="r">Day 1</th><th class="r">Day 7</th></tr></thead><tbody>
           ${t.fields.map(([k, l]) => `<tr><td>${l}</td><td class="r"><input data-s="baseline" data-k="${k}" type="number" step="${k === 'rating' ? '0.1' : '1'}" min="0" value="${t.baseline[k] ?? ''}" ${ro}></td>
             <td class="r"><input data-s="after" data-k="${k}" type="number" step="${k === 'rating' ? '0.1' : '1'}" min="0" value="${t.after[k] ?? ''}" ${ro}></td></tr>`).join('')}
@@ -749,28 +757,18 @@ R.trial = async () => {
           <tr><td><b>Complete</b></td><td class="r"><b>${t.completeness_before ?? '–'}${t.completeness_before != null ? '%' : ''}</b></td><td class="r"><b>${t.completeness_after ?? '–'}${t.completeness_after != null ? '%' : ''}</b></td></tr>
         </tbody></table></div>
     </div>
-    ${IS_CLIENT ? '' : '<div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn primary" id="tSave">Save numbers</button></div>'}
+    <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn primary" id="tSave">Save numbers</button></div>
 
     <div class="card" style="margin-top:14px"><h2>Day-by-day plan</h2>
       ${days.map(d => `<div class="tday ${d === t.day ? 'today' : ''}"><div class="tdh">Day ${d} · ${DAY_TITLE[d]} ${d === t.day ? '<span class="badge accent">today</span>' : ''}</div>
         ${t.tasks.filter(x => x.day === d).map(x => `<div class="ttask ${x.done ? 'done' : ''}"><label class="row" style="gap:10px;align-items:flex-start;flex-wrap:nowrap">
-          <input type="checkbox" data-task="${x.id}" ${x.done ? 'checked' : ''} ${ro} style="margin-top:3px"><span><b>${fmt.esc(x.title)}</b>${x.help ? `<div class="small muted">${fmt.esc(x.help)}</div>` : ''}</span></label>
+          <input type="checkbox" data-task="${x.id}" ${x.done ? 'checked' : ''} ${roTask} style="margin-top:3px"><span><b>${fmt.esc(x.title)}</b>${x.help ? `<div class="small muted">${fmt.esc(x.help)}</div>` : ''}</span></label>
           ${IS_CLIENT ? (x.note ? `<div class="small" style="margin-left:26px">${fmt.esc(x.note)}</div>` : '') : `<input class="tnote" data-note="${x.id}" value="${fmt.esc(x.note || '')}" placeholder="Note (optional), e.g. uploaded 14 photos">`}</div>`).join('')}</div>`).join('')}
       ${IS_CLIENT ? '' : `<form id="tAdd" class="row" style="gap:8px;margin-top:10px;align-items:flex-end"><label class="f" style="flex:1">Add your own task<input name="title" required placeholder="e.g. Set up a flu-shot booking page"></label>
         <label class="f">Day<select name="day">${days.map(d => `<option ${d === t.day ? 'selected' : ''}>${d}</option>`).join('')}</select></label><button class="btn">Add</button></form>`}
     </div>`;
-  if (IS_CLIENT) return;
-  $('#wUrl').onchange = e => put({ website_url: e.target.value }, 'Website saved');
-  $$('[data-wcheck]').forEach(btn => btn.onclick = async () => {
-    const which = btn.dataset.wcheck;
-    if (!$('#wUrl').value.trim()) return toast('Type their website address first');
-    btn.disabled = true; btn.textContent = 'Checking… (up to a minute)';
-    try { await put({ website_url: $('#wUrl').value }); await api(`${base}/trial/website/${which}`, { method: 'POST' }); toast('Website checked'); route(); }
-    catch (err) { toast(err.message, 8000); btn.disabled = false; btn.textContent = which === 'before' ? 'Check website (Day 1)' : 'Check again (Day 7)'; }
-  });
   const put = (body, msg) => api(`${base}/trial`, { method: 'PUT', json: body }).then(() => { if (msg) toast(msg); });
-  $$('[data-task]').forEach(cb => cb.onchange = async () => { await put({ tasks: [{ id: cb.dataset.task, done: cb.checked, note: $(`[data-note="${cb.dataset.task}"]`).value }] }); route(); });
-  $$('[data-note]').forEach(inp => inp.onchange = () => put({ tasks: [{ id: inp.dataset.note, done: $(`[data-task="${inp.dataset.note}"]`).checked, note: inp.value }] }, 'Note saved'));
+  $('#wUrl').onchange = e => put({ website_url: e.target.value }, 'Website saved');
   $('#tGoal').onchange = e => put({ goal: e.target.value }, 'Goal saved');
   $('#tSave').onclick = async () => {
     const body = { baseline: {}, after: {}, checks_before: {}, checks_after: {} };
@@ -779,6 +777,16 @@ R.trial = async () => {
     try { await put(body, 'Saved'); route(); } catch (e) { toast(e.message); }
   };
   $$('[data-c]').forEach(i => i.onchange = () => $('#tSave').click());
+  if (IS_CLIENT) return;
+  $$('[data-wcheck]').forEach(btn => btn.onclick = async () => {
+    const which = btn.dataset.wcheck;
+    if (!$('#wUrl').value.trim()) return toast('Type their website address first');
+    btn.disabled = true; btn.textContent = 'Checking… (up to a minute)';
+    try { await put({ website_url: $('#wUrl').value }); await api(`${base}/trial/website/${which}`, { method: 'POST' }); toast('Website checked'); route(); }
+    catch (err) { toast(err.message, 8000); btn.disabled = false; btn.textContent = which === 'before' ? 'Check website (Day 1)' : 'Check again (Day 7)'; }
+  });
+  $$('[data-task]').forEach(cb => cb.onchange = async () => { await put({ tasks: [{ id: cb.dataset.task, done: cb.checked, note: $(`[data-note="${cb.dataset.task}"]`).value }] }); route(); });
+  $$('[data-note]').forEach(inp => inp.onchange = () => put({ tasks: [{ id: inp.dataset.note, done: $(`[data-task="${inp.dataset.note}"]`).checked, note: inp.value }] }, 'Note saved'));
   $('#tAdd').onsubmit = async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); await put({ tasks: [{ new: true, title: f.title, day: +f.day }] }, 'Task added'); route(); };
   $('#tLink').onclick = async () => { const r = await api(`${base}/trial-link`, { method: 'POST' });
     try { await navigator.clipboard.writeText(r.url); toast('Report link copied: paste it into a text or email to the owner', 6000); } catch { prompt('Report link:', r.url); } };
@@ -791,10 +799,11 @@ function webCard(t, ro) {
   const ring = (snap, label) => snap.score != null ? `<div class="wshot"><div class="small muted">${label} · ${snap.date}</div>
       <div class="wscore ${snap.score >= 70 ? 'good' : snap.score >= 50 ? 'warn' : 'bad'}">${snap.score}<span>/100</span></div>
       ${snap.screenshot ? `<img src="${snap.screenshot}" alt="${label} on a phone">` : '<div class="small muted" style="margin-top:6px">No phone screenshot (Google speed test didn\'t respond)</div>'}</div>` : '';
-  return `<div class="card" style="margin-top:14px"><h2>Their website: before &amp; after</h2>
-    <p class="small muted">Scan the site on day 1, fix what it finds during the week, then scan again on day 7. The report shows the score, a phone screenshot before and after, and everything that was fixed. You'll need access to their website (WordPress, Wix, Squarespace…) or whoever manages it.</p>
+  return `<div class="card" style="margin-top:14px"><h2>${IS_CLIENT ? 'Your' : 'Their'} website: before &amp; after</h2>
+    <p class="small muted">${IS_CLIENT ? 'Type your website address below. We scan it on day 1, fix what we can during the week, and scan it again on day 7 so you can see the difference.' : ''}</p>
+    <p class="small muted" ${IS_CLIENT ? 'hidden' : ''}>Scan the site on day 1, fix what it finds during the week, then scan again on day 7. The report shows the score, a phone screenshot before and after, and everything that was fixed. You'll need access to their website (WordPress, Wix, Squarespace…) or whoever manages it.</p>
     <div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap">
-      <label class="f" style="flex:1;min-width:220px">Their website<input id="wUrl" value="${fmt.esc(t.website_url || '')}" placeholder="e.g. eastbentleighpharmacy.com.au" ${ro}></label>
+      <label class="f" style="flex:1;min-width:220px">${IS_CLIENT ? 'Your website' : 'Their website'}<input id="wUrl" value="${fmt.esc(t.website_url || '')}" placeholder="e.g. eastbentleighpharmacy.com.au" ${ro}></label>
       ${IS_CLIENT ? '' : `<button class="btn ${b.score == null ? 'primary' : ''}" data-wcheck="before">${b.score == null ? 'Check website (Day 1)' : 'Re-check Day 1'}</button>
         <button class="btn ${b.score != null && a.score == null ? 'primary' : ''}" data-wcheck="after" ${b.score == null ? 'disabled' : ''}>Check again (Day 7)</button>`}</div>
     ${w ? `<div class="wcompare">${ring(b, 'Before')}${a.score != null ? `<div class="warrow">→</div>${ring(a, 'After')}` : ''}</div>
@@ -830,11 +839,11 @@ R.local = async () => {
           ${d.ranking.map((r, i) => `<tr class="${r.is_self ? 'sel' : ''}"><td>${i + 1}. ${r.is_self ? `<b>${fmt.esc(CLIENT.name)}</b> <span class="badge accent">you</span>` : fmt.esc(r.name)}</td>
             <td class="r">${r.rating ? '★' + r.rating : '–'}</td><td class="r">${fmt.num(r.reviews)}</td><td class="r">${r.new_reviews != null ? '+' + r.new_reviews : '–'}</td></tr>`).join('')}</tbody></table></div>
           ${d.top_competitor && L.reviews_total != null && d.top_competitor.reviews > L.reviews_total ? `<div class="callout small" style="margin-top:8px">${fmt.esc(d.top_competitor.name)} has ${fmt.num(d.top_competitor.reviews - L.reviews_total)} more reviews. At 10 new reviews a month you'd catch up in about ${Math.ceil((d.top_competitor.reviews - L.reviews_total) / 10)} months.</div>` : ''}`
-        : `<div class="empty">No competitors added yet.${IS_CLIENT ? '' : ' Add them below.'}</div>`}</div>
+        : `<div class="empty">No competitors added yet. Add them below.</div>`}</div>
     </div>
-    ${IS_CLIENT ? '' : `
+    ${`
     <div class="card" style="margin-top:14px"><h2>Add a month's figures</h2>
-      <p class="small muted">${GBP_HELP} Takes about 2 minutes a month. Leave a box empty if Google doesn't show it.</p>
+      <p class="small muted">${IS_CLIENT ? '✏️ <b>Please fill this in once a month.</b> ' : ''}${GBP_HELP} Takes about 2 minutes a month. Leave a box empty if Google doesn't show it.</p>
       <form id="gbpForm" class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap">
         <label class="f">Month<input name="month" type="month" value="${editMonth}" style="width:150px"></label>
         ${d.activity.map(([k, l]) => `<label class="f">${l}<input name="${k}" type="number" min="0" value="${cur[k] ?? ''}" style="width:120px"></label>`).join('')}
@@ -843,13 +852,13 @@ R.local = async () => {
         <button class="btn primary">Save month</button></form></div>
     <div class="card" style="margin-top:14px"><div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap"><h2>Competitors to track</h2>
       <div class="row" style="gap:8px;align-items:flex-end;flex-wrap:wrap">
-        <label class="f">What they do<input id="term" value="${fmt.esc(d.search_term)}" placeholder="e.g. pharmacy" style="width:150px"></label>
+        <label class="f">${IS_CLIENT ? 'What you do' : 'What they do'}<input id="term" value="${fmt.esc(d.search_term)}" placeholder="e.g. pharmacy" style="width:150px"></label>
         <label class="f">Suburb<input id="area" value="${fmt.esc(d.area)}" placeholder="e.g. East Bentleigh VIC" style="width:190px"></label>
         <button class="btn" id="gMaps" type="button">Open in Google Maps ↗</button>
         ${d.places_enabled ? `<button class="btn primary" id="gFind" type="button">Find competitors automatically</button>${comp.list.length ? '<button class="btn" id="gRefresh" type="button">↻ Update their reviews</button>' : ''}` : ''}</div></div>
       <p class="small muted">${d.places_enabled
         ? 'Click “Find competitors automatically” to list the nearest similar businesses with their stars and reviews. Next month, click “Update their reviews” to see who gained how many.'
-        : 'Click <b>Open in Google Maps</b>: it searches “what they do near suburb”. Type the 3–6 nearest into the rows below: name, star rating and number of reviews (shown under each name on Maps), then click Save. <span class="muted">(Automatic search needs a Google Places key: see DEPLOY.md, Step 6.)</span>'}</p>
+        : 'Click <b>Open in Google Maps</b>: it searches “' + (IS_CLIENT ? 'what you do' : 'what they do') + ' near suburb”. Type the 3–6 nearest into the rows below: name, star rating and number of reviews (shown under each name on Maps), then click Save.' + (IS_CLIENT ? '' : ' <span class="muted">(Automatic search needs a Google Places key: see DEPLOY.md, Step 6.)</span>')}</p>
       <div id="compRows">${(comp.list.length ? comp.list : [{}, {}, {}]).map(c => compRow(c)).join('')}</div>
       <div class="row" style="gap:8px;margin-top:8px"><button class="btn sm" type="button" id="compAddRow">＋ Add row</button><button class="btn primary" type="button" id="compSave">Save competitors for ${editMonth}</button></div></div>`}
     ${d.series.length ? `<div class="card" style="margin-top:14px"><h2>All months</h2><div class="tw"><table><thead><tr><th>Month</th>${d.activity.map(([, l]) => `<th class="r">${l}</th>`).join('')}<th class="r">Reviews</th><th class="r">New</th><th class="r">Rating</th></tr></thead><tbody>
@@ -864,7 +873,6 @@ R.local = async () => {
       { label: 'Website clicks', data: s.map(r => r.website_clicks || 0), backgroundColor: cssVar('--s6'), borderRadius: 3 }] },
       options: { scales: { x: { grid: { display: false } }, y: axis(fmt.compact) } } });
   }
-  if (IS_CLIENT) return;
   $('#gbpForm').onsubmit = async e => {
     e.preventDefault(); const fd = Object.fromEntries(new FormData(e.target)); const month = fd.month; delete fd.month;
     try { await api(`${base}/local/${month}`, { method: 'PUT', json: { values: fd } }); toast('Month saved'); route(); } catch (err) { toast(err.message, 6000); }
@@ -953,6 +961,7 @@ R.upload = async () => {
   view.innerHTML = `
     <div class="grid g2">
       <form class="card" id="upForm"><h2>Upload a report</h2>
+        ${IS_CLIENT ? '<p class="small"><b>Already advertising yourself?</b> Download a report from your Facebook/Instagram ads, Google Ads or Google Analytics and upload it here so we can see what\'s worked so far. Steps are on the right.</p>' : ''}
         <p class="small muted">Export a CSV from Meta Ads Manager, Google Ads or Google Analytics and drop it here. AdPulse recognises the columns and fills in the right tab. Uploading the same period again replaces it.</p>
         <label class="dropzone" id="drop"><input type="file" name="file" accept=".csv,.tsv,.txt" required hidden><span id="dropText">📄 Click to choose a CSV file, or drag it here</span></label>
         <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap;align-items:flex-end">
